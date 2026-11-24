@@ -1,43 +1,48 @@
+/* 网络优先 + 缓存兜底的 Service Worker
+ *
+ * 原来那版是「缓存优先」且写死了绝对路径 '/'，改一次文件用户永远看到旧版；
+ * 现在改成：先请求线上，成功后顺手更新缓存；断网才回落到缓存。
+ * 路径统一用相对写法 './'，这样根域名和 GitHub Pages 子目录两种部署都能用。
+ */
+var CACHE = 'cimbar-duplex-v2';
+var CORE = ['./', './index.html', './duplex.html', './recv.html'];
 
-var _cacheName = 'cimbar-js-v2026-01-20T0312';
-var _cacheFiles = [
-  '/',
-  '/index.html',
-  '/cimbar_js.2026-01-20T0312.js',
-  '/cimbar_js.2026-01-20T0312.wasm',
-  '/favicon.ico',
-  '/icon-192x192.png',
-  '/icon-512x512.png',
-  '/main.2026-01-20T0312.js',
-  '/pwa.2026-01-20T0312.json'
-];
-
-// fetch files
 self.addEventListener('install', function (e) {
   e.waitUntil(
-    caches.open(_cacheName).then(function (cache) {
-      return cache.addAll(_cacheFiles);
-    })
-  );
-  self.skipWaiting();
-});
-
-// serve from cache
-self.addEventListener('fetch', function (e) {
-  e.respondWith(
-    caches.match(e.request).then(function (response) {
-      return response || fetch(e.request);
-    })
+    caches.open(CACHE).then(function (c) {
+      return Promise.all(CORE.map(function (u) {
+        return c.add(u).catch(function () { });   // 缺文件也不阻塞安装
+      }));
+    }).then(function () { return self.skipWaiting(); })
   );
 });
 
-// clean old caches
 self.addEventListener('activate', function (e) {
-  e.waitUntil(function () {
+  e.waitUntil(
     caches.keys().then(function (names) {
-      for (var i in names)
-        if (names[i] != _cacheName)
-          caches.delete(names[i]);
-    });
-  });
+      return Promise.all(names.map(function (n) {
+        return n === CACHE ? null : caches.delete(n);
+      }));
+    }).then(function () { return self.clients.claim(); })
+  );
+});
+
+self.addEventListener('fetch', function (e) {
+  var req = e.request;
+  if (req.method !== 'GET') return;
+  if (new URL(req.url).origin !== self.location.origin) return;   // 外域一律不碰
+
+  e.respondWith(
+    fetch(req).then(function (res) {
+      if (res && res.ok && res.type === 'basic') {
+        var copy = res.clone();
+        caches.open(CACHE).then(function (c) { c.put(req, copy); });
+      }
+      return res;
+    }).catch(function () {
+      return caches.match(req).then(function (r) {
+        return r || caches.match('./index.html');
+      });
+    })
+  );
 });
