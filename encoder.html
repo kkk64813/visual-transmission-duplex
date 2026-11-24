@@ -9,6 +9,19 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, user-scalable=no">
   <link rel="manifest" href="pwa.json">
+<style>
+  /* 浅色改造：只动外框与拖放区，不碰 canvas 里画出来的矩阵码 */
+  body { background: #f5f7f6 !important; }
+  #dragdrop, .dragdrop {
+    background-image: none !important;
+    background-color: #ffffff !important;
+    outline: 2px dashed #cfdbd6 !important;
+    box-shadow: 0 8px 30px rgba(20,40,35,.07) !important;
+    border-radius: 14px !important;
+    color: #55605b !important;
+  }
+  .dragdrop::before { color: #7b8782 !important; font-family: inherit !important; font-size: 15px !important; letter-spacing: .04em; }
+</style>
 </head>
 
 <body>
