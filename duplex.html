@@ -5,65 +5,103 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Cimbar 双工 · 电脑端</title>
 <style>
-  html,body{margin:0;height:100%;background:#000;overflow:hidden;
-    font:13px/1.5 -apple-system,"Segoe UI","Microsoft YaHei",sans-serif;color:#cfe3ff}
-  #enc{position:fixed;inset:0 0 96px 0;border:0;width:100%;height:calc(100% - 96px);background:#000}
-  #bar{position:fixed;left:0;right:0;bottom:0;height:96px;
-    background:rgba(8,10,14,.92);border-top:1px solid #1d2530;
-    display:flex;align-items:center;gap:14px;padding:0 16px;backdrop-filter:blur(6px)}
-  .pill{display:flex;flex-direction:column;justify-content:center;min-width:96px}
-  .pill b{font-size:11px;color:#7d8b9c;font-weight:400}
-  .pill span{font-size:15px;font-variant-numeric:tabular-nums}
-  .dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:6px;vertical-align:1px}
-  .dot.off{background:#555} .dot.on{background:#2ea043} .dot.bad{background:#f85149}
-  button{background:#1b2430;color:#cfe3ff;border:1px solid #2a3542;border-radius:8px;
-    padding:9px 14px;font-size:13px;cursor:pointer}
-  button:hover{background:#243040}
-  button.primary{background:#2563eb;border-color:#2563eb;color:#fff}
-  button.ghost{background:transparent}
-  #meter{width:120px;height:10px;background:#121821;border:1px solid #24303d;border-radius:6px;overflow:hidden}
-  #meter>i{display:block;height:100%;width:0;background:linear-gradient(90deg,#2ea043,#d29922,#f85149)}
-  #tip{position:fixed;left:16px;bottom:104px;right:16px;font-size:12px;color:#8b97a5;pointer-events:none}
-  #mini{position:fixed;right:14px;bottom:104px;display:none}
-  .folded #bar{height:40px} .folded #enc{height:calc(100% - 40px)}
-  .folded .pill,.folded #meter,.folded #auth{display:none}
+  :root{
+    --bg:#f3f6f4; --surface:#fff; --ink:#16211e; --muted:#6d7a75;
+    --line:#e1e8e4; --accent:#0e7c66; --accent-deep:#0a5f4f; --accent-soft:#e8f5f0;
+    --good:#1f7a4d; --bad:#b4423a; --shadow:0 1px 2px rgba(20,40,35,.04),0 10px 30px rgba(20,40,35,.07);
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%;margin:0;background:var(--bg);color:var(--ink);
+    font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
+
+  #bar{
+    position:fixed;inset:0 0 auto 0;z-index:10;
+    display:flex;align-items:center;gap:10px;flex-wrap:wrap;
+    padding:10px 16px;background:rgba(255,255,255,.88);backdrop-filter:blur(10px);
+    border-bottom:1px solid var(--line)
+  }
+  .brand{display:flex;align-items:center;gap:9px;margin-right:6px}
+  .mark{width:22px;height:22px;display:grid;grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr;gap:2px}
+  .mark i{display:block;border-radius:3px;background:var(--accent)}
+  .mark i:nth-child(2){opacity:.9;background:var(--accent-deep)}
+  .mark i:nth-child(3){opacity:.55;background:var(--accent-deep)}
+  .mark i:nth-child(4){background:#9ed4c4}
+  .brand strong{font-weight:650;letter-spacing:.01em}
+
+  .stat{display:flex;flex-direction:column;min-width:66px;padding:2px 10px;border-left:1px solid var(--line)}
+  .stat b{font-size:10.5px;letter-spacing:.06em;color:var(--muted);font-weight:500;text-transform:uppercase}
+  .stat span{font-size:13.5px;font-variant-numeric:tabular-nums}
+
+  #link{display:flex;align-items:center;gap:6px}
+  .dot{width:7px;height:7px;border-radius:50%;background:#c3cdc8;flex:0 0 7px}
+  .dot.on{background:var(--good)} .dot.bad{background:var(--bad)}
+
+  #meter{width:104px;height:7px;background:#eef2f0;border:1px solid var(--line);border-radius:6px;overflow:hidden;margin-top:5px}
+  #meter>i{display:block;height:100%;width:0;background:linear-gradient(90deg,#3fa37a,#c9a227,#b4423a);transition:width .12s linear}
+
+  .spacer{flex:1 1 auto}
+  button{
+    font:inherit;font-weight:600;cursor:pointer;border-radius:9px;padding:8px 14px;
+    background:var(--surface);color:var(--ink);border:1px solid var(--line);
+    transition:background .15s ease,border-color .15s ease,transform .1s ease
+  }
+  button:hover{background:#f7faf8;border-color:#d2dbd7}
+  button:active{transform:translateY(1px)}
+  button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+  button.primary:hover{background:var(--accent-deep);border-color:var(--accent-deep)}
+  button.ghost{background:transparent;color:var(--muted);border-color:transparent}
+  button.ghost:hover{background:#f1f5f3;color:var(--ink)}
+
+  #stage{position:fixed;inset:0;padding:64px 16px 16px;display:flex}
+  #frame{
+    flex:1;display:flex;background:var(--surface);border:1px solid var(--line);
+    border-radius:14px;box-shadow:var(--shadow);overflow:hidden
+  }
+  #enc{flex:1;border:0;width:100%;height:100%;background:#fff;display:block}
+
+  #tip{
+    position:fixed;left:16px;right:16px;bottom:12px;z-index:9;
+    font-size:12.5px;color:var(--muted);text-align:center;pointer-events:none;
+    text-shadow:0 1px 0 rgba(255,255,255,.9)
+  }
+
+  .folded #bar .stat,.folded #bar #meter,.folded #bar #link{display:none}
+  .folded #stage{padding-top:56px}
 </style>
 </head>
 <body>
 
-<iframe id="enc" src="encoder.html"></iframe>
-
-<div id="tip">手机端打开 recv.html，点导航里的「双向」开关即可建立反向超声通道。</div>
-
 <div id="bar">
-  <div class="pill">
-    <b>双向状态</b>
-    <span id="link"><i class="dot off"></i>未开启</span>
+  <div class="brand">
+    <div class="mark" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+    <strong>Cimbar 双工</strong>
   </div>
-  <div class="pill">
-    <b>状态包</b>
-    <span id="pk">0</span>
+
+  <div class="stat">
+    <b>双向</b>
+    <span id="link"><i class="dot"></i>未开启</span>
   </div>
-  <div class="pill">
-    <b>手机 mode</b>
-    <span id="md">—</span>
-  </div>
-  <div class="pill">
-    <b>还差</b>
-    <span id="need">—</span>
-  </div>
-  <div class="pill">
-    <b>当前帧率</b>
-    <span id="fps">15</span>
-  </div>
-  <div class="pill">
-    <b>麦克风电平</b>
+  <div class="stat"><b>状态包</b><span id="pk">0</span></div>
+  <div class="stat"><b>手机 mode</b><span id="md">—</span></div>
+  <div class="stat"><b>还差</b><span id="need">—</span></div>
+  <div class="stat"><b>帧率</b><span id="fps">15</span></div>
+  <div class="stat" style="border-left:0">
+    <b>麦克风</b>
     <div id="meter"><i></i></div>
   </div>
+
+  <div class="spacer"></div>
+
   <button class="primary" id="btnOn">开启双向</button>
   <button id="btnMode" title="开播前把编码模式对齐手机锁定的模式">对齐 mode</button>
   <button class="ghost" id="btnFold">收起</button>
 </div>
+
+<div id="stage">
+  <div id="frame"><iframe id="enc" src="encoder.html"></iframe></div>
+</div>
+
+<div id="tip">手机开 recv.html，点导航里的「双向」开关，就能建立超声回传通道。</div>
 
 <script src="duplex.js"></script>
 <script src="duplex-rx.js"></script>
@@ -72,36 +110,27 @@
   var enc = document.getElementById('enc');
   var st  = DuplexRx.state;
 
-  function spin(el){ return el.querySelector('.dot'); }
-
   window.DuplexUI = function(){
-    var s = st;
     var link = document.getElementById('link');
-    var dot = link.querySelector('.dot');
-    if (!s.on) { dot.className = 'dot off'; link.innerHTML = '<i class="dot off"></i>未开启'; }
-    else if (s.fallback) { dot.className = 'dot bad'; link.innerHTML = '<i class="dot bad"></i>失联 · 已回退单向'; }
-    else if (s.packets > 0) { dot.className = 'dot on'; link.innerHTML = '<i class="dot on"></i>在线'; }
-    else { dot.className = 'dot'; link.innerHTML = '<i class="dot"></i>等待手机'; }
+    var s = st;
+
+    if (!s.on)            link.innerHTML = '<i class="dot"></i>未开启';
+    else if (s.fallback)  link.innerHTML = '<i class="dot bad"></i>失联 · 已回退单向';
+    else if (s.packets>0) link.innerHTML = '<i class="dot on"></i>在线';
+    else                  link.innerHTML = '<i class="dot"></i>等待手机';
 
     document.getElementById('pk').textContent = s.packets;
     var ls = s.lastStatus;
-    document.getElementById('md').textContent = ls ? (DuplexRx.modeName(ls.mode) + ' (' + ls.mode + ')') : '—';
+    document.getElementById('md').textContent   = ls ? DuplexRx.modeName(ls.mode) : '—';
     document.getElementById('need').textContent = ls ? (ls.need ? ls.need + ' 块' : '—') : '—';
-    document.getElementById('fps').textContent = s.curFps;
-
-    var m = document.getElementById('meter').querySelector('i');
-    var lv = Math.min(1, s.level * 12);
-    m.style.width = (lv * 100).toFixed(1) + '%';
-    s.peak = 0;   // 峰值按帧清零，避免一直停在历史最大值
+    document.getElementById('fps').textContent  = s.curFps;
   };
 
   window.DuplexLog = function(msg){
     var t = document.getElementById('tip');
-    if (t) { t.textContent = msg; t.style.color = '#9fb4cc'; }
+    if (t) t.textContent = msg;
     console.log(msg);
   };
-
-  function target(){ return { Main: enc.contentWindow.Main, isPaused: function(){ return enc.contentWindow.Main.isPaused(); } }; }
 
   document.getElementById('btnOn').onclick = async function(){
     var ok = await DuplexRx.start(function(){ return enc.contentWindow; });
@@ -117,15 +146,13 @@
     this.textContent = document.body.classList.contains('folded') ? '展开' : '收起';
   };
 
-  // 电平表刷新（独立于状态包节拍，方便自检时看"到底有没有听到"）
   setInterval(function(){
-    if (st.on) {
-      var m = document.getElementById('meter').querySelector('i');
-      m.style.width = (Math.min(1, st.level * 12) * 100).toFixed(1) + '%';
-    }
+    if (!st.on) return;
+    var m = document.querySelector('#meter > i');
+    m.style.width = (Math.min(1, st.level * 12) * 100).toFixed(1) + '%';
   }, 120);
 
-  enc.addEventListener('load', function(){ DuplexUI(); });
+  enc.addEventListener('load', DuplexUI);
   DuplexUI();
 })();
 </script>

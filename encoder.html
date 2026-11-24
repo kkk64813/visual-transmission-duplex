@@ -2,28 +2,7 @@
 <html lang="en" data-framework="javascript">
 
 <head>
-<script>
-(async () => {
-  // 模块授权验证 – 使用正确的后端地址和模块名
-  const API_BASE = 'https://mg-secret-vault.mgjack13.workers.dev';
-  try {
-    const resp = await fetch(`${API_BASE}/api/check-module?module=ENCODER`, {
-      credentials: 'include'
-    });
-    const data = await resp.json();
-    if (!data.allowed) {
-      alert('Please activate your license.');
-      // 跳转到 visual-transmission 子目录下的首页
-      location.href = 'index.html';
-      return;
-    }
-  } catch (err) {
-    console.error('License verification error:', err);
-    alert('License verification failed.');
-    location.href = 'index.html';
-  }
-})();
-</script>
+<!-- 本站为纯静态气隙工具：不连任何授权服务，打开即用 -->
 
 
   <title>视觉传输</title>

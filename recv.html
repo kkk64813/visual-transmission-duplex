@@ -3,25 +3,7 @@
 
 <head>
 
-<script>
-(async () => {
-  const API_BASE = 'https://mg-secret-vault.mgjack13.workers.dev';
-  try {
-    const resp = await fetch(`${API_BASE}/api/check-module?module=DECODER`, {
-      credentials: 'include'
-    });
-    const data = await resp.json();
-    if (!data.allowed) {
-      alert('Please activate your license.');
-      location.href = 'index.html';
-      return;
-    }
-  } catch (err) {
-    alert('License verification failed.');
-    location.href = 'index.html';
-  }
-})();
-</script>
+<!-- 本站为纯静态气隙工具：不连任何授权服务，打开即用 -->
 
 
 
