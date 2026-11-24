@@ -21,6 +21,50 @@
     color: #55605b !important;
   }
   .dragdrop::before { color: #7b8782 !important; font-family: inherit !important; font-size: 15px !important; letter-spacing: .04em; }
+
+  /* 导航：原来的黑底飘橙，改成白底墨绿 */
+  #nav-button {
+    width: 36px !important; height: 36px !important;
+    margin: 12px 0 0 12px !important;
+    background-image: none !important;
+    background: #fff !important;
+    border: 1px solid #e1e8e4 !important;
+    border-radius: 10px !important;
+    box-shadow: 0 2px 10px rgba(20,40,35,.07) !important;
+  }
+  #nav-container .icon-bar:nth-of-type(1) { background-color: #0e7c66 !important; }
+  #nav-container .icon-bar:nth-of-type(2) { background-color: #1f8f78 !important; }
+  #nav-container .icon-bar:nth-of-type(3) { background-color: #3fa37a !important; }
+  #nav-container .icon-bar:nth-of-type(4) { background-color: #0a5f4f !important; }
+  #nav-container:focus-within .icon-bar { background-color: #b9c6c0 !important; }
+
+  #nav-content {
+    background: #fff !important;
+    margin-top: 0 !important;
+    height: 100% !important;
+    border-right: 1px solid #e1e8e4;
+    box-shadow: 0 10px 30px rgba(20,40,35,.08);
+    border-radius: 0 12px 12px 0;
+  }
+  #nav-content li a, #nav-content h4, #nav-content span { color: #16211e !important; }
+  #nav-content li a.attention {
+    animation: none !important;
+    background: #e8f5f0; border-radius: 8px; color: #0a5f4f !important;
+  }
+  #nav-content li:hover { background: #f4f8f6 !important; }
+  #nav-content hr { border-color: #e8eeeb !important; }
+  #nav-container.mode-b a.mode-b,
+  #nav-container.mode-bm a.mode-bm,
+  #nav-container.mode-bu a.mode-bu,
+  #nav-container.mode-4c a.mode-4c { color: #0e7c66 !important; }
+
+  #home-button {
+    background: #fff !important;
+    border: 1px solid #cfdeda !important;
+    box-shadow: 0 2px 12px rgba(20,40,35,.09) !important;
+    opacity: 1 !important;
+  }
+  #home-button svg path { fill: #0e7c66 !important; }
 </style>
 </head>
 
