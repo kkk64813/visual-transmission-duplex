@@ -1,0 +1,636 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>MG's Mystic Warehouse | 神经仓库终端</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;800&family=Rajdhani:wght@300;500;700&family=Space+Mono:wght@400;700&family=Inter:opsz,wght@14..32,300;400;500;600&display=swap" rel="stylesheet">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { background: #020408; font-family: 'Inter', 'Rajdhani', sans-serif; color: #eef2ff; overflow-x: hidden; min-height: 100vh; }
+        #particle-canvas { position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: 0; pointer-events: none; }
+        .cyber-grid { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background-image: repeating-linear-gradient(0deg, rgba(255,94,46,0.06) 1px, transparent 1px), repeating-linear-gradient(90deg, rgba(255,94,46,0.06) 1px, transparent 1px); background-size: 55px 55px; pointer-events: none; z-index: 1; }
+        .glass-panel { background: rgba(5,8,14,0.75); backdrop-filter: blur(16px); border: 1px solid rgba(255,94,46,0.4); border-radius: 42px; box-shadow: 0 20px 40px -16px rgba(0,0,0,0.8); transition: transform 0.25s; position: relative; z-index: 10; }
+        .btn-neon { background: linear-gradient(105deg, #ff5e2e 0%, #b53a0f 100%); border: none; border-radius: 60px; padding: 12px 28px; font-weight: 700; letter-spacing: 1.2px; font-family: 'Rajdhani', sans-serif; color: white; cursor: pointer; transition: 0.2s; box-shadow: 0 4px 14px rgba(255,94,46,0.5); }
+        .btn-outline { background: transparent; border: 1.5px solid #ff5e2e; border-radius: 60px; padding: 10px 24px; color: #ffccaa; font-weight: 600; cursor: pointer; backdrop-filter: blur(4px); transition: 0.2s; }
+        .btn-outline:hover { background: rgba(255,94,46,0.2); box-shadow: 0 0 12px rgba(255,94,46,0.4); }
+        .module-card { background: rgba(0,0,0,0.65); border: 1px solid #2a2f3c; border-radius: 32px; padding: 24px 12px; text-align: center; transition: all 0.3s cubic-bezier(0.2, 0.9, 0.4, 1.1); color: #6a7080; cursor: not-allowed; position: relative; }
+        .module-card.unlocked { border-color: #ff5e2e; background: rgba(255,94,46,0.1); color: #ffccaa; cursor: pointer; box-shadow: 0 0 12px rgba(255,94,46,0.2); }
+        .module-card.unlocked:hover { transform: translateY(-6px) rotateX(3deg) rotateY(2deg); border-color: #ffaa77; box-shadow: 0 20px 32px -8px rgba(255,94,46,0.6); }
+        .module-icon { font-size: 2.6rem; margin-bottom: 16px; display: block; }
+        .lock-badge { position: absolute; top: 14px; right: 18px; font-size: 1rem; color: #ff5e2e; }
+        .time-mega { font-family: 'Space Mono', 'Orbitron', monospace; font-size: 2.3rem; font-weight: 700; letter-spacing: 4px; background: linear-gradient(135deg, #ffe0cc, #ff5e2e); -webkit-background-clip: text; background-clip: text; color: transparent; animation: textPulse 2s infinite; }
+        @keyframes textPulse { 0% { opacity: 0.9; text-shadow: 0 0 4px #ff5e2e; } 50% { opacity: 1; text-shadow: 0 0 14px #ff5e2e; } 100% { opacity: 0.9; text-shadow: 0 0 4px #ff5e2e; } }
+        .time-ring-container { position: relative; width: 80px; height: 80px; display: inline-block; margin-left: 20px; }
+        .time-ring-bg { stroke: #2a2f3c; stroke-width: 6; fill: none; }
+        .time-ring-progress { stroke: #ff5e2e; stroke-width: 6; fill: none; stroke-linecap: round; transition: stroke-dashoffset 0.3s; }
+        .time-ring-text { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); font-size: 1rem; font-family: monospace; color: #ffccaa; }
+        .terminal-bar { position: fixed; bottom: 0; left: 0; width: 100%; background: rgba(0,0,0,0.85); backdrop-filter: blur(8px); border-top: 1px solid #ff5e2e; font-family: 'Space Mono', monospace; font-size: 0.75rem; padding: 6px 20px; z-index: 1000; display: flex; justify-content: space-between; align-items: center; }
+        #terminalLog { flex: 1; overflow-x: auto; white-space: nowrap; height: 24px; line-height: 24px; margin-left: 12px; }
+        .toast-msg { position: fixed; bottom: 80px; right: 24px; background: #12161f; border-left: 5px solid #ff5e2e; border-radius: 20px; padding: 12px 20px; z-index: 10001; animation: slideToast 0.25s ease; font-family: monospace; }
+        @keyframes slideToast { from { opacity: 0; transform: translateX(60px); } to { opacity: 1; transform: translateX(0); } }
+        @media (max-width: 800px) { 
+            .time-mega { font-size: 1rem; letter-spacing: 1px; } 
+            .time-ring-container { width: 45px; height: 45px; margin-left: 5px; } 
+            .time-ring-text { font-size: 0.7rem; }
+            .module-grid { grid-template-columns: repeat(2,1fr) !important; } 
+            .glass-panel { padding: 16px; } 
+            .admin-tab-container { gap: 6px; } 
+            .admin-tab { padding: 6px 12px; font-size: 0.7rem; }
+            .header-buttons { flex-wrap: wrap; justify-content: center; gap: 8px; margin-top: 8px; }
+            .btn-outline, .btn-neon { padding: 6px 12px; font-size: 0.8rem; }
+        }
+        .input-cyber { background: #0c0f16; border: 1px solid #2a2f3c; border-radius: 40px; padding: 14px 20px; color: #f0f3fa; font-family: 'JetBrains Mono', monospace; outline: none; width: 100%; transition: 0.2s; }
+        .input-cyber:focus { border-color: #ff5e2e; box-shadow: 0 0 12px rgba(255,94,46,0.3); }
+        .admin-tab-container { display: flex; gap: 16px; flex-wrap: wrap; margin: 28px 0 24px; border-bottom: 1px solid rgba(255,94,46,0.3); padding-bottom: 12px; position: relative; }
+        .admin-tab { background: rgba(10,14,22,0.7); border: none; padding: 12px 28px; border-radius: 60px; color: #ccd6f0; font-weight: 600; cursor: pointer; transition: 0.25s; font-family: 'Rajdhani', sans-serif; position: relative; }
+        .admin-tab.active, .admin-tab:hover { background: linear-gradient(115deg, #ff5e2e20, #ff5e2e08); color: #ffaa77; box-shadow: 0 0 12px rgba(255,94,46,0.4); }
+        .admin-tab.active::after { content: ''; position: absolute; bottom: -2px; left: 15%; width: 70%; height: 2px; background: #ff5e2e; border-radius: 2px; box-shadow: 0 0 6px #ff5e2e; animation: tabGlow 1.2s infinite alternate; }
+        @keyframes tabGlow { from { opacity: 0.6; width: 40%; left: 30%; } to { opacity: 1; width: 70%; left: 15%; } }
+        .drag-module-item { background: #0b0e16; border-radius: 28px; padding: 14px 20px; margin-bottom: 12px; border-left: 5px solid #ff5e2e; cursor: grab; transition: 0.1s; }
+        .drag-module-item:active { cursor: grabbing; }
+        .drag-over { border: 2px dashed #ff5e2e; background: #1e1f2e; transform: scale(1.01); }
+        .admin-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+        .admin-table th, .admin-table td { padding: 12px 8px; border-bottom: 1px solid rgba(255,94,46,0.2); text-align: left; vertical-align: middle; }
+        .admin-table tr:hover { background: rgba(255,94,46,0.08); }
+        .status-badge { display: inline-block; padding: 4px 10px; border-radius: 30px; font-size: 0.7rem; font-weight: bold; }
+        .status-unused { background: #2a2f3c; color: #aaa; }
+        .status-used { background: #ff5e2e30; color: #ffaa77; border: 1px solid #ff5e2e; }
+        .status-expired { background: #5a2e2e; color: #ff8888; }
+        .urgent-time { color: #ff2e2e; text-shadow: 0 0 8px #ff2e2e; animation: blinkRed 0.8s infinite; }
+        @keyframes blinkRed { 0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; } }
+        .module-checkbox-group { display: flex; flex-wrap: wrap; gap: 12px; margin: 16px 0; max-height: 200px; overflow-y: auto; background: rgba(0,0,0,0.3); padding: 12px; border-radius: 24px; }
+        .module-checkbox-group label { display: flex; align-items: center; gap: 8px; background: #0c0f16; padding: 6px 12px; border-radius: 40px; border: 1px solid #2a2f3c; cursor: pointer; transition: 0.2s; }
+        .module-checkbox-group label:hover { border-color: #ff5e2e; background: rgba(255,94,46,0.1); }
+        .copy-icon { cursor: pointer; margin-left: 8px; color: #ffaa77; transition: 0.2s; }
+        .copy-icon:hover { color: #ff5e2e; transform: scale(1.1); }
+    </style>
+</head>
+<body>
+<canvas id="particle-canvas"></canvas>
+<div class="cyber-grid"></div>
+<div id="appRoot" style="position: relative; z-index: 20; max-width: 1400px; margin: 0 auto; padding: 24px 20px 60px;"></div>
+<div class="terminal-bar" id="terminalBar"><i class="fas fa-terminal"></i><div id="terminalLog">[>] SYSTEM BOOT</div><div><i class="fas fa-shield-alt"></i> SECURE MODE</div></div>
+
+<script>
+    const API_BASE = 'https://mg-secret-vault.mgjack13.workers.dev';
+    const i18n = {
+        en: { title:"MG's Mystic Warehouse", lockedStatus:"🔒 LOCKED", unlockedStatus:"⚡ GRANTED", enterCode:"Enter Activation Code", unlockBtn:"Unlock Vault", admin:"Admin", support:"Support", timeRemaining:"Session Left", modules:"Tool Modules", announcement:"Announcement", generate:"Generate", copy:"Copy", minutes:"min", seconds:"sec", dashboard:"Dashboard", codeGen:"Code Gen", moduleMgr:"Module Manager", supportMsgs:"Messages", settings:"Settings", save:"Save", delete:"Delete", refresh:"Refresh", adminLogin:"Admin Login", adminPanel:"Admin Panel", status:"Status", remaining:"Remaining", used:"Used", unused:"Unused", expired:"Expired", clearAll:"Clear All", selectModules:"Select Modules", manualRefresh:"Refresh List" },
+        zh: { title:"MG的神秘仓库", lockedStatus:"🔒 已锁定", unlockedStatus:"⚡ 已激活", enterCode:"输入激活码", unlockBtn:"解锁", admin:"管理", support:"客服", timeRemaining:"剩余时间", modules:"工具模块", announcement:"公告栏", generate:"生成", copy:"复制", minutes:"分", seconds:"秒", dashboard:"看板", codeGen:"激活码", moduleMgr:"模块管理", supportMsgs:"留言", settings:"设置", save:"保存", delete:"删除", refresh:"刷新", adminLogin:"管理员登录", adminPanel:"管理面板", status:"状态", remaining:"剩余", used:"已使用", unused:"未使用", expired:"已过期", clearAll:"清空所有", selectModules:"选择模块", manualRefresh:"刷新列表" }
+    };
+    let currentLang = localStorage.getItem('mg_lang') || 'en';
+    function t(key) { return i18n[currentLang][key] || i18n.en[key] || key; }
+
+    let state = {
+        locked: true, loggedIn: false, sessionExpiry: 0, allowedModules: [], deviceId: null,
+        adminMode: false, adminLoggedIn: false, customModules: [],
+        announcement: localStorage.getItem('mg_announcement') || "✨ Welcome to MG's Mystic Warehouse | Unlock to access all tools.",
+        siteTitle: localStorage.getItem('mg_site_title') || "MG's Mystic Warehouse",
+        sessionsLog: JSON.parse(localStorage.getItem('mg_sessions_log') || '[]')
+    };
+    let sessionInterval = null, toastTimer = null, refreshTimer = null;
+    let currentAdminTab = 'dashboard';
+
+    const coreModules = [
+        { id: "Encoder", name: "Encoder", icon: "fa-lock", url: "encoder.html", enabled: true, order: 0, isCustom: false, core: true },
+        { id: "Decoder", name: "Decoder", icon: "fa-lock-open", url: "recv.html", enabled: true, order: 1, isCustom: false, core: true },
+        { id: "Serverless", name: "Serverless Communication", icon: "fa-cloud-upload-alt", url: "webcom.html", enabled: true, order: 2, isCustom: false, core: true },
+        { id: "VideoHide", name: "File Video Steganography", icon: "fa-video", url: "Videohide.html", enabled: true, order: 3, isCustom: false, core: true }
+    ];
+    const iconList = ['fa-cogs','fa-microchip','fa-shield-haltered','fa-laptop-code','fa-database','fa-cloud-upload-alt','fa-video','fa-key','fa-lock','fa-unlock-alt','fa-chart-line','fa-robot','fa-terminal','fa-code-branch','fa-fire','fa-bolt','fa-meteor','fa-satellite-dish','fa-brain','fa-cube'];
+
+    function showToast(msg, isErr = false) {
+        if(toastTimer) clearTimeout(toastTimer);
+        const old = document.querySelector('.toast-msg');
+        if(old) old.remove();
+        const div = document.createElement('div');
+        div.className = 'toast-msg';
+        div.innerHTML = `<i class="fas ${isErr ? 'fa-exclamation-triangle' : 'fa-circle-info'}"></i> ${msg}`;
+        document.body.appendChild(div);
+        toastTimer = setTimeout(() => div.remove(), 3500);
+    }
+
+    function addTerminalLog(msg, force = false) {
+        if (!force && (msg.includes("Session active") || msg.includes("API unreachable") || msg.includes("Warehouse terminal online"))) return;
+        const term = document.getElementById('terminalLog');
+        if(term) {
+            const span = document.createElement('span');
+            span.innerHTML = `[${new Date().toLocaleTimeString()}] ${msg}`;
+            term.appendChild(span);
+            while(term.children.length > 8) term.removeChild(term.firstChild);
+            term.scrollLeft = term.scrollWidth;
+        }
+    }
+
+    async function getDeviceFingerprint() {
+        try {
+            const canvas = document.createElement('canvas');
+            canvas.width = 200; canvas.height = 50;
+            const ctx = canvas.getContext('2d');
+            ctx.fillStyle = "#ff5e2e"; ctx.fillRect(0,0,200,50);
+            ctx.font = "12px monospace"; ctx.fillStyle = "white"; ctx.fillText("MG_WAREHOUSE", 10, 30);
+            const fpCanvas = canvas.toDataURL();
+            const data = [navigator.userAgent, screen.width+'x'+screen.height, Intl.DateTimeFormat().resolvedOptions().timeZone, navigator.language, navigator.hardwareConcurrency || 4, navigator.deviceMemory || 2, fpCanvas].join('|');
+            if (crypto.subtle) {
+                const hash = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(data));
+                return Array.from(new Uint8Array(hash)).map(b=>b.toString(16).padStart(2,'0')).join('');
+            } else {
+                let h = 0;
+                for(let i=0;i<data.length;i++) h = ((h<<5)-h)+data.charCodeAt(i), h|=0;
+                return 'fp_'+Math.abs(h).toString(16);
+            }
+        } catch(e) { return 'dev_'+Math.random().toString(36).substring(2,10); }
+    }
+
+    async function fetchPublicModules() {
+        try {
+            const res = await fetch(`${API_BASE}/api/public/modules`);
+            const data = await res.json();
+            if (data.success && data.modules && Array.isArray(data.modules)) {
+                state.customModules = data.modules;
+                saveCustomModules(false);
+                render();
+                addTerminalLog("Modules synced from server", true);
+                return true;
+            }
+            return false;
+        } catch(e) {
+            console.warn("Failed to fetch public modules", e);
+            return false;
+        }
+    }
+
+    async function syncModulesToBackend() {
+        if (!state.adminLoggedIn) return;
+        const token = localStorage.getItem('mg_admin_token');
+        try {
+            const res = await fetch(`${API_BASE}/api/admin/update-modules`, {
+                method: 'POST',
+                headers: { 
+                    'Content-Type': 'application/json',
+                    'Authorization': token ? `Bearer ${token}` : ''
+                },
+                body: JSON.stringify({ modules: state.customModules })
+            });
+            if (!res.ok) console.warn("Failed to sync modules to backend");
+        } catch(e) { console.error(e); }
+    }
+
+    function saveCustomModules(triggerSync = true) { 
+        localStorage.setItem('mg_custom_modules', JSON.stringify(state.customModules));
+        if (triggerSync) syncModulesToBackend();
+    }
+    function loadCustomModules() {
+        const stored = localStorage.getItem('mg_custom_modules');
+        if(stored) state.customModules = JSON.parse(stored);
+        else state.customModules = [...coreModules];
+        for(let core of coreModules) if(!state.customModules.find(m => m.id === core.id)) state.customModules.push({ ...core });
+        state.customModules.forEach((m, idx) => { if(m.order === undefined) m.order = idx; });
+        saveCustomModules(false);
+    }
+
+    async function refreshSession() {
+        try {
+            const res = await fetch(`${API_BASE}/api/session`, { credentials: 'include' });
+            const data = await res.json();
+            const wasLoggedIn = state.loggedIn;
+            if(data.logged_in === true) {
+                state.loggedIn = true; state.locked = false;
+                state.allowedModules = data.modules || [];
+                if(data.expires_at) state.sessionExpiry = data.expires_at * 1000;
+                else state.sessionExpiry = Date.now() + 3600000;
+                if(state.sessionExpiry < Date.now()) throw new Error();
+                startCountdown();
+                if (!wasLoggedIn) addTerminalLog("Session established", true);
+            } else { 
+                if (wasLoggedIn) addTerminalLog("Session expired", true);
+                logoutFallback(); 
+            }
+            if (!state.adminMode) render();
+            else updateTimeDisplayOnly();
+        } catch(e) { logoutFallback(); if (!state.adminMode) render(); else updateTimeDisplayOnly(); }
+    }
+
+    function updateTimeDisplayOnly() {
+        const remainSec = state.loggedIn ? Math.max(0, Math.floor((state.sessionExpiry - Date.now())/1000)) : 0;
+        const remainStr = state.loggedIn ? `${Math.floor(remainSec/60)}${t('minutes')} ${remainSec%60}${t('seconds')}` : '--';
+        const remainSpan = document.getElementById('remainTime');
+        if(remainSpan) remainSpan.innerText = remainStr;
+        const ringText = document.querySelector('.time-ring-text');
+        if(ringText) ringText.innerText = `${Math.floor(remainSec/60)}:${(remainSec%60).toString().padStart(2,'0')}`;
+        const isUrgent = state.loggedIn && remainSec < 300;
+        if(remainSpan) {
+            if(isUrgent) remainSpan.classList.add('urgent-time');
+            else remainSpan.classList.remove('urgent-time');
+        }
+        const dateEl = document.getElementById('liveDateTime');
+        if(dateEl) dateEl.innerText = new Date().toLocaleString(currentLang === 'zh' ? 'zh-CN' : 'en-US', { hour12: false });
+        if(state.loggedIn && state.sessionExpiry) {
+            const remaining = Math.max(0, state.sessionExpiry - Date.now());
+            const percent = Math.min(1, remaining / 3600000);
+            const ring = document.querySelector('.time-ring-progress');
+            if(ring) {
+                const radius = 35;
+                const circum = 2 * Math.PI * radius;
+                const offset = circum * (1 - percent);
+                ring.style.strokeDashoffset = offset;
+            }
+        }
+    }
+
+    function logoutFallback() { 
+        const wasLoggedIn = state.loggedIn;
+        state.loggedIn = false; state.locked = true; state.allowedModules = []; 
+        if(sessionInterval) clearInterval(sessionInterval); 
+        if (wasLoggedIn) addTerminalLog("Session lost", true);
+    }
+    function startCountdown() { if(sessionInterval) clearInterval(sessionInterval); sessionInterval = setInterval(() => { if(!state.loggedIn) return; if(Date.now() >= state.sessionExpiry) { logoutFallback(); showToast("Session expired", true); if (!state.adminMode) render(); else updateTimeDisplayOnly(); } else { if (!state.adminMode) render(); else updateTimeDisplayOnly(); } }, 1000); }
+
+    async function submitActivation(code) {
+        if(!state.deviceId) state.deviceId = await getDeviceFingerprint();
+        try {
+            const res = await fetch(`${API_BASE}/api/login`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ code, device_id: state.deviceId }),
+                credentials: 'include'
+            });
+            const data = await res.json();
+            if(res.ok && data.success) {
+                showToast("Unlocked successfully");
+                await refreshSession();
+                addTerminalLog(`Unlocked with ${code}`, true);
+            } else showToast(data.message || "Invalid code", true);
+        } catch(err) {
+            console.error(err);
+            showToast("API error: " + err.message, true);
+            addTerminalLog("API unreachable", true);
+        }
+    }
+
+    async function onModuleClick(moduleId, customUrl, isCustom) {
+        if(state.locked) { showToast("System locked", true); return; }
+        if(isCustom && customUrl) { window.open(customUrl, '_blank'); return; }
+        const presetMap = { 'Encoder':'encoder.html', 'Decoder':'recv.html', 'Serverless':'webcom.html', 'VideoHide':'Videohide.html' };
+        if(presetMap[moduleId]) { window.open(presetMap[moduleId], '_blank'); return; }
+        if(state.allowedModules.includes(moduleId)) {
+            const modCfg = state.customModules.find(m => m.id === moduleId);
+            let url = modCfg?.url || '#';
+            if(url && url !== "#") window.open(url, '_blank');
+            else showToast("Module ready, no URL set", false);
+        } else showToast("Access denied: module not licensed", true);
+    }
+
+    function sendSupport(data) { let msgs = JSON.parse(localStorage.getItem('mg_support_messages') || '[]'); msgs.push({ ...data, time: new Date().toISOString() }); localStorage.setItem('mg_support_messages', JSON.stringify(msgs)); showToast("Message sent"); addTerminalLog(`Support from ${data.email}`, true); }
+
+    async function openAdminLogin() {
+        let pwd = prompt(t('adminLogin') + " Password:");
+        if (!pwd) return;
+        try {
+            const res = await fetch(`${API_BASE}/api/admin-login`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username: 'admin', password: pwd })
+            });
+            const data = await res.json();
+            if (res.ok && data.success) {
+                localStorage.setItem('mg_admin_token', data.token);
+                state.adminLoggedIn = true;
+                state.adminMode = true;
+                await fetchPublicModules();
+                render();
+                addTerminalLog("Admin access granted", true);
+                showToast("Admin mode enabled");
+            } else {
+                showToast(data.message || "Invalid admin credentials", true);
+            }
+        } catch(err) {
+            console.error(err);
+            showToast("Admin login error: " + err.message, true);
+        }
+    }
+
+    async function generateActivationCode(duration, modulesArray) {
+        const modulesStr = modulesArray.join(',');
+        const token = localStorage.getItem('mg_admin_token');
+        try {
+            const res = await fetch(`${API_BASE}/api/admin/generate-code`, {
+                method: 'POST',
+                headers: { 
+                    'Content-Type': 'application/json',
+                    'Authorization': token ? `Bearer ${token}` : ''
+                },
+                body: JSON.stringify({ duration, modules: modulesStr })
+            });
+            const data = await res.json();
+            if (res.ok && data.success) {
+                showToast(`Code generated: ${data.code}`, false);
+                addTerminalLog(`Generated code ${data.code}`, true);
+                return data.code;
+            } else {
+                let msg = data.message || "Generation failed";
+                if (res.status === 401) msg = "Admin session expired. Please re-login.";
+                showToast(msg, true);
+                return null;
+            }
+        } catch(err) {
+            console.error(err);
+            showToast("API error: " + err.message, true);
+            return null;
+        }
+    }
+
+    async function fetchActivationCodes() {
+        const token = localStorage.getItem('mg_admin_token');
+        try {
+            const res = await fetch(`${API_BASE}/api/admin/list-codes`, {
+                headers: { 'Authorization': token ? `Bearer ${token}` : '' }
+            });
+            const data = await res.json();
+            if (res.ok && data.success) return data.codes;
+            else return [];
+        } catch(e) { return []; }
+    }
+
+    async function deleteActivationCode(code) {
+        const token = localStorage.getItem('mg_admin_token');
+        try {
+            const res = await fetch(`${API_BASE}/api/admin/delete-code`, {
+                method: 'POST',
+                headers: { 
+                    'Content-Type': 'application/json',
+                    'Authorization': token ? `Bearer ${token}` : ''
+                },
+                body: JSON.stringify({ code })
+            });
+            const data = await res.json();
+            if (res.ok && data.success) {
+                showToast("Code deleted", false);
+                return true;
+            } else {
+                showToast(data.message || "Delete failed", true);
+                return false;
+            }
+        } catch(e) { showToast("API error", true); return false; }
+    }
+
+    function copyToClipboard(text) {
+        navigator.clipboard.writeText(text).then(() => showToast("Copied!", false)).catch(() => showToast("Copy failed", true));
+    }
+
+    function render() {
+        const root = document.getElementById('appRoot');
+        if(!root) return;
+        if(state.adminMode && state.adminLoggedIn) {
+            if (root.querySelector('.glass-panel') && root.querySelector('.admin-tab-container')) {
+                updateTimeDisplayOnly();
+                return;
+            }
+            root.innerHTML = renderAdminPanel();
+            attachAdminEvents();
+        } else {
+            root.innerHTML = renderUserPortal();
+            attachUserEvents();
+        }
+        updateTimeDisplayOnly();
+        if(window.clockInterval) clearInterval(window.clockInterval);
+        window.clockInterval = setInterval(updateTimeDisplayOnly, 1000);
+    }
+
+    function renderUserPortal() {
+        const remainSec = state.loggedIn ? Math.max(0, Math.floor((state.sessionExpiry - Date.now())/1000)) : 0;
+        const remainStr = state.loggedIn ? `${Math.floor(remainSec/60)}${t('minutes')} ${remainSec%60}${t('seconds')}` : '--';
+        const isUrgent = state.loggedIn && remainSec < 300;
+        let modulesDisplay = [...state.customModules].filter(m=>m.enabled).sort((a,b)=>(a.order||0)-(b.order||0));
+        const modulesHtml = modulesDisplay.map(m => {
+            const isUnlocked = !state.locked && state.allowedModules.includes(m.id.toUpperCase());
+            return `<div class="module-card ${state.locked ? '' : (isUnlocked ? 'unlocked' : '')}" data-id="${m.id}" data-url="${m.url||''}" data-custom="${m.isCustom}"><i class="fas ${m.icon} module-icon"></i><strong>${m.name}</strong>${state.locked || !isUnlocked ? `<div class="lock-badge"><i class="fas fa-lock"></i></div>` : ''}</div>`;
+        }).join('');
+        return `
+        <div class="glass-panel" style="padding: 28px; margin-bottom: 28px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap;">
+                <div><h1 style="font-size: 2.2rem; font-family:'Orbitron'; background: linear-gradient(125deg, #ffc0a0, #ff5e2e); -webkit-background-clip: text; background-clip: text; color: transparent;"><i class="fas fa-cube"></i> ${state.siteTitle}</h1></div>
+                <div class="header-buttons" style="display: flex; gap: 12px; align-items: center; flex-wrap: wrap;">
+                    <div class="time-mega ${isUrgent ? 'urgent-time' : ''}" id="liveDateTime"></div>
+                    <div class="time-ring-container">
+                        <svg width="80" height="80" viewBox="0 0 80 80">
+                            <circle class="time-ring-bg" cx="40" cy="40" r="35" stroke-width="6" fill="none"/>
+                            <circle class="time-ring-progress" cx="40" cy="40" r="35" stroke-width="6" fill="none" stroke-dasharray="219.91" stroke-dashoffset="0" transform="rotate(-90 40 40)"/>
+                        </svg>
+                        <div class="time-ring-text">${Math.floor(remainSec/60)}:${(remainSec%60).toString().padStart(2,'0')}</div>
+                    </div>
+                    <button id="langSwitch" class="btn-outline" style="padding: 6px 12px;"><i class="fas fa-globe"></i> ${currentLang === 'en' ? '中文' : 'EN'}</button>
+                    <button id="adminBtn" class="btn-outline"><i class="fas fa-crown"></i> ${t('admin')}</button>
+                    <button id="supportBtn" class="btn-outline"><i class="fas fa-headset"></i> ${t('support')}</button>
+                </div>
+            </div>
+            <div class="glass-panel" style="margin-top: 28px; padding: 18px; background: rgba(0,0,0,0.5);"><i class="fas fa-bullhorn"></i> <strong>📢 ${t('announcement')}:</strong> ${state.announcement}</div>
+        </div>
+        <div class="glass-panel" style="padding: 28px;">
+            <div style="display: flex; justify-content: space-between; flex-wrap: wrap;">
+                <div><i class="fas fa-shield-alt"></i> STATUS: <span style="color:#ff5e2e; font-weight:bold;">${state.locked ? t('lockedStatus') : t('unlockedStatus')}</span></div>
+                <div><i class="fas fa-hourglass-half"></i> ${t('timeRemaining')}: <span id="remainTime" class="${isUrgent ? 'urgent-time' : ''}">${remainStr}</span></div>
+            </div>
+            ${state.locked ? `<div style="margin-top: 32px; display: flex; gap: 16px; flex-wrap: wrap;"><input type="text" id="activationCodeInput" class="input-cyber" placeholder="${t('enterCode')}" style="flex:2; min-width: 150px;"><button id="unlockAction" class="btn-neon">${t('unlockBtn')}</button></div>` : `<div style="margin-top: 24px;"><i class="fas fa-check-circle"></i> Active session — all licensed modules ready</div>`}
+        </div>
+        <div class="glass-panel" style="margin-top: 32px; padding: 28px;">
+            <h3><i class="fas fa-cubes"></i> ${t('modules')}</h3>
+            <div class="module-grid" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(170px,1fr)); gap: 22px; margin-top: 28px;">${modulesHtml}</div>
+        </div>`;
+    }
+
+    function attachUserEvents() {
+        document.getElementById('langSwitch')?.addEventListener('click', () => { currentLang = currentLang === 'en' ? 'zh' : 'en'; localStorage.setItem('mg_lang', currentLang); render(); });
+        document.getElementById('adminBtn')?.addEventListener('click', () => openAdminLogin());
+        document.getElementById('supportBtn')?.addEventListener('click', () => { let e=prompt("Email:"), p=prompt("Phone:"), m=prompt("Message:"); if(e&&m) sendSupport({email:e, phone:p, message:m}); else showToast("Email and message required",true); });
+        document.getElementById('unlockAction')?.addEventListener('click', () => { const code = document.getElementById('activationCodeInput')?.value.trim().toUpperCase(); if(code) submitActivation(code); else showToast("Enter code", true); });
+        document.querySelectorAll('.module-card').forEach(card => card.addEventListener('click', () => { if(state.locked) return; const id=card.dataset.id, url=card.dataset.url, isCustom=card.dataset.custom==='true'; if(!card.classList.contains('unlocked')) { showToast("Module not authorized",true); return; } onModuleClick(id,url,isCustom); }));
+    }
+
+    function renderAdminPanel() { return `<div class="glass-panel" style="padding:28px;"><div style="display:flex; justify-content:space-between; flex-wrap:wrap;"><h2><i class="fas fa-user-secret"></i> ${t('adminPanel')}</h2><div style="gap:12px; display:flex;"><button id="exitAdminMode" class="btn-outline">Exit</button> <button id="adminLogout" class="btn-outline">Logout</button></div></div><div class="admin-tab-container" id="adminTabContainerHead"></div><div id="adminTabContent"></div></div>`; }
+
+    async function renderAdminTabContent(tab) {
+        const container = document.getElementById('adminTabContent');
+        if(!container) return;
+        currentAdminTab = tab;
+        if(tab === 'dashboard') {
+            let msgs=JSON.parse(localStorage.getItem('mg_support_messages')||'[]').length;
+            container.innerHTML=`<div><i class="fas fa-chart-line"></i> Active Session: ${state.loggedIn?'✅':'❌'}<br>Messages: ${msgs}<br>Custom Modules: ${state.customModules.length}<br>Logs: ${state.sessionsLog.slice(0,3).map(l=>l.action).join(',')}<br><button id="refreshStatsBtn" class="btn-outline">${t('refresh')}</button></div>`;
+            document.getElementById('refreshStatsBtn')?.addEventListener('click', () => renderAdminTabContent('dashboard'));
+        } else if(tab === 'codegen') {
+            const allModules = [...state.customModules.filter(m => m.enabled), ...coreModules];
+            const uniqueModules = Array.from(new Map(allModules.map(m => [m.id, m])).values());
+            const moduleCheckboxes = uniqueModules.map(mod => `<label><input type="checkbox" value="${mod.id}" class="module-checkbox" checked> ${mod.name}</label>`).join('');
+            container.innerHTML = `
+                <div style="display:flex; flex-direction:column; gap:16px;">
+                    <select id="codeDuration" class="input-cyber"><option value="3minutes">3 min</option><option value="1hour">1 hour</option><option value="24hours">24 hours</option><option value="1week">1 week</option><option value="1month">1 month</option></select>
+                    <div><strong>${t('selectModules')}:</strong><div class="module-checkbox-group" id="moduleCheckboxGroup">${moduleCheckboxes}</div></div>
+                    <div style="display: flex; gap: 12px;"><button id="genCodeBtn" class="btn-neon">${t('generate')}</button><button id="manualRefreshCodesBtn" class="btn-outline">${t('manualRefresh')}</button></div>
+                    <div id="genResultBox" class="glass-panel" style="padding:16px;"></div>
+                </div>
+                <h4>Existing Codes</h4>
+                <div style="overflow-x:auto;"><table class="admin-table">
+                    <thead><tr><th>Code</th><th>Duration</th><th>Modules</th><th>${t('status')}</th><th>${t('remaining')}</th><th></th></tr></thead>
+                    <tbody id="codeTableBody"></tbody>
+                </table></div>`;
+            await refreshCodeTable();
+            document.getElementById('genCodeBtn')?.addEventListener('click', async () => {
+                const duration = document.getElementById('codeDuration').value;
+                const selectedModules = Array.from(document.querySelectorAll('.module-checkbox:checked')).map(cb => cb.value);
+                if (selectedModules.length === 0) { showToast("Select at least one module", true); return; }
+                const newCode = await generateActivationCode(duration, selectedModules);
+                if (newCode) {
+                    document.getElementById('genResultBox').innerHTML = `<code>${newCode}</code> <button class="btn-outline copyNewBtn">${t('copy')}</button>`;
+                    document.querySelector('.copyNewBtn')?.addEventListener('click', () => { copyToClipboard(newCode); });
+                    await refreshCodeTable();
+                }
+            });
+            document.getElementById('manualRefreshCodesBtn')?.addEventListener('click', async () => {
+                await refreshCodeTable();
+                showToast("Code list refreshed", false);
+            });
+        } else if(tab === 'modulemgr') {
+            const sorted = [...state.customModules].sort((a,b)=>(a.order||0)-(b.order||0));
+            container.innerHTML = `<button id="newModuleBtn" class="btn-neon" style="margin-bottom:20px;"><i class="fas fa-plus"></i> Add Custom Module</button><div id="dragModulesContainer">${sorted.map(m=>`<div class="drag-module-item" data-id="${m.id}" draggable="true"><div style="display:flex; flex-wrap:wrap; gap:12px; align-items:center;"><i class="fas ${m.icon}" style="font-size:1.5rem;"></i> <strong>${m.name}</strong> <select class="mod-icon-select" data-id="${m.id}">${iconList.map(ic=>`<option value="${ic}" ${m.icon===ic?'selected':''}>${ic}</option>`).join('')}</select><input type="text" class="mod-url-edit" data-id="${m.id}" value="${m.url||''}" placeholder="URL"><input type="text" class="mod-name-edit" data-id="${m.id}" value="${m.name}"><label>Enable: <input type="checkbox" class="mod-enable-edit" data-id="${m.id}" ${m.enabled!==false?'checked':''}></label>${!m.core?`<button class="del-module" data-id="${m.id}">🗑️</button>`:'<span style="color:#ff5e2e;">core</span>'}</div></div>`).join('')}</div><p><i class="fas fa-arrows-alt"></i> Drag to reorder. Changes auto-save.</p>`;
+            initDragDrop(); attachModuleEditHandlers();
+            document.getElementById('newModuleBtn')?.addEventListener('click',()=>{ state.customModules.push({ id:'cust_'+Date.now(), name:'New Tool', icon:'fa-cogs', url:'https://example.com', enabled:true, order:state.customModules.length, isCustom:true }); saveCustomModules(); renderAdminTabContent('modulemgr'); });
+        } else if(tab === 'supportmsg') {
+            let msgs=JSON.parse(localStorage.getItem('mg_support_messages')||'[]');
+            container.innerHTML=`<div><button id="clearMessagesBtn" class="btn-outline" style="margin-bottom:16px;">${t('clearAll')}</button><ul>${msgs.map(m=>`<li><strong>${m.email}</strong> ${m.phone ? `(${m.phone})` : ''}: ${m.message}<br><small>${m.time}</small></li>`).join('')}</ul></div>`;
+            document.getElementById('clearMessagesBtn')?.addEventListener('click',()=>{ localStorage.removeItem('mg_support_messages'); renderAdminTabContent('supportmsg'); showToast("All messages cleared"); });
+        } else if(tab === 'settings') {
+            container.innerHTML=`<div><label>Site Title: <input id="setSiteTitle" class="input-cyber" value="${state.siteTitle}"></label></div><div><label>Announcement: <textarea id="setAnnouncement" rows="2" class="input-cyber">${state.announcement}</textarea></label></div><div><label>New Admin Password: <input type="password" id="newAdminPwd" class="input-cyber"></label></div><button id="saveSettingsBtn" class="btn-neon">${t('save')}</button>`;
+            document.getElementById('saveSettingsBtn')?.addEventListener('click',async ()=>{
+                state.siteTitle=document.getElementById('setSiteTitle').value;
+                state.announcement=document.getElementById('setAnnouncement').value;
+                let npwd=document.getElementById('newAdminPwd').value;
+                if(npwd) {
+                    try {
+                        const old = prompt("Enter current admin password:");
+                        const token = localStorage.getItem('mg_admin_token');
+                        const res = await fetch(`${API_BASE}/api/admin/change-password`, {
+                            method: 'POST',
+                            headers: { 
+                                'Content-Type': 'application/json',
+                                'Authorization': token ? `Bearer ${token}` : ''
+                            },
+                            body: JSON.stringify({ old_password: old, new_password: npwd })
+                        });
+                        if(res.ok) showToast("Password updated");
+                        else showToast("Password change failed", true);
+                    } catch(e) { showToast("API error", true); }
+                }
+                localStorage.setItem('mg_site_title',state.siteTitle);
+                localStorage.setItem('mg_announcement',state.announcement);
+                showToast("Saved");
+                render();
+            });
+        }
+    }
+
+    async function refreshCodeTable() {
+        const tableBody = document.getElementById('codeTableBody');
+        if (!tableBody) return;
+        const codes = await fetchActivationCodes();
+        tableBody.innerHTML = codes.map(c => {
+            let statusText = '', statusClass = '';
+            if (c.status === 'unused') { statusText = t('unused'); statusClass = 'status-unused'; }
+            else if (c.status === 'used') { statusText = t('used'); statusClass = 'status-used'; }
+            else { statusText = t('expired'); statusClass = 'status-expired'; }
+            let remainingStr = '';
+            if (c.remaining_seconds && c.remaining_seconds > 0) {
+                const rem = c.remaining_seconds;
+                const hours = Math.floor(rem / 3600);
+                const mins = Math.floor((rem % 3600) / 60);
+                remainingStr = hours>0? `${hours}h ${mins}m` : `${mins}m`;
+            } else if (c.status === 'used') remainingStr = 'Expired';
+            else remainingStr = '—';
+            return `<tr>
+                <td style="font-family:monospace">${c.code} <i class="fas fa-copy copy-icon" data-code="${c.code}" style="cursor:pointer;"></i></td>
+                <td>${c.duration_type}</td>
+                <td>${c.module_permissions}</td>
+                <td><span class="status-badge ${statusClass}">${statusText}</span></td>
+                <td>${remainingStr}</td>
+                <td><button class="btn-outline del-code-btn" data-code="${c.code}" style="padding:2px 12px;">${t('delete')}</button></td>
+            </tr>`;
+        }).join('');
+        document.querySelectorAll('.copy-icon').forEach(icon => {
+            icon.addEventListener('click', (e) => {
+                e.stopPropagation();
+                copyToClipboard(icon.dataset.code);
+            });
+        });
+        document.querySelectorAll('.del-code-btn').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                const code = btn.dataset.code;
+                if(confirm(`Delete ${code}?`)) {
+                    const ok = await deleteActivationCode(code);
+                    if(ok) refreshCodeTable();
+                }
+            });
+        });
+    }
+
+    function initDragDrop() { let dragSrc=null; document.querySelectorAll('.drag-module-item').forEach(el=>{ el.setAttribute('draggable','true'); el.addEventListener('dragstart',e=>{ dragSrc=el; e.dataTransfer.effectAllowed='move'; }); el.addEventListener('dragover',e=>{ e.preventDefault(); el.classList.add('drag-over'); }); el.addEventListener('dragleave',()=>el.classList.remove('drag-over')); el.addEventListener('drop',e=>{ e.preventDefault(); el.classList.remove('drag-over'); if(dragSrc && dragSrc!==el){ const parent=document.getElementById('dragModulesContainer'); const children=[...parent.children]; const fromIdx=children.indexOf(dragSrc), toIdx=children.indexOf(el); if(fromIdx!==-1 && toIdx!==-1){ let reorder=[...state.customModules]; const [moved]=reorder.splice(fromIdx,1); reorder.splice(toIdx,0,moved); reorder.forEach((mod,idx)=>mod.order=idx); state.customModules=reorder; saveCustomModules(); renderAdminTabContent('modulemgr'); } } dragSrc=null; }); }); }
+    function attachModuleEditHandlers() {
+        document.querySelectorAll('.mod-icon-select').forEach(sel=>sel.addEventListener('change',e=>{ let id=sel.dataset.id, mod=state.customModules.find(m=>m.id===id); if(mod) mod.icon=sel.value; saveCustomModules(); renderAdminTabContent('modulemgr'); }));
+        document.querySelectorAll('.mod-url-edit').forEach(inp=>inp.addEventListener('change',e=>{ let id=inp.dataset.id, mod=state.customModules.find(m=>m.id===id); if(mod) mod.url=inp.value; saveCustomModules(); }));
+        document.querySelectorAll('.mod-name-edit').forEach(inp=>inp.addEventListener('change',e=>{ let id=inp.dataset.id, mod=state.customModules.find(m=>m.id===id); if(mod) mod.name=inp.value; saveCustomModules(); renderAdminTabContent('modulemgr'); }));
+        document.querySelectorAll('.mod-enable-edit').forEach(ch=>ch.addEventListener('change',e=>{ let id=ch.dataset.id, mod=state.customModules.find(m=>m.id===id); if(mod) mod.enabled=ch.checked; saveCustomModules(); render(); }));
+        document.querySelectorAll('.del-module').forEach(btn=>btn.addEventListener('click',e=>{ let id=btn.dataset.id; state.customModules=state.customModules.filter(m=>m.id!==id); saveCustomModules(); renderAdminTabContent('modulemgr'); }));
+    }
+
+    function attachAdminEvents() {
+        const headContainer = document.getElementById('adminTabContainerHead');
+        if(headContainer) {
+            const tabs = ['dashboard','codegen','modulemgr','supportmsg','settings'];
+            headContainer.innerHTML = tabs.map(tab => `<button class="admin-tab" data-tab="${tab}">${t(tab)}</button>`).join('');
+            const setActiveTab = (tab) => {
+                currentAdminTab = tab;
+                renderAdminTabContent(tab);
+                document.querySelectorAll('.admin-tab').forEach(btn => {
+                    if(btn.dataset.tab === tab) btn.classList.add('active');
+                    else btn.classList.remove('active');
+                });
+            };
+            document.querySelectorAll('.admin-tab').forEach(btn => {
+                btn.addEventListener('click', () => setActiveTab(btn.dataset.tab));
+            });
+            setActiveTab(currentAdminTab);
+        }
+        document.getElementById('exitAdminMode')?.addEventListener('click',()=>{ state.adminMode=false; render(); });
+        document.getElementById('adminLogout')?.addEventListener('click',()=>{ 
+            localStorage.removeItem('mg_admin_token');
+            state.adminLoggedIn=false; 
+            state.adminMode=false; 
+            render(); 
+        });
+    }
+
+    function initParticles() {
+        const canvas = document.getElementById('particle-canvas');
+        const ctx = canvas.getContext('2d');
+        let width = window.innerWidth, height = window.innerHeight;
+        let particles = [];
+        function resize() { width = window.innerWidth; height = window.innerHeight; canvas.width = width; canvas.height = height; }
+        window.addEventListener('resize', resize);
+        resize();
+        for(let i=0; i<100; i++) particles.push({ x: Math.random()*width, y: Math.random()*height, radius: Math.random()*2+1, alpha: Math.random()*0.5+0.2, speedX: (Math.random()-0.5)*0.3, speedY: (Math.random()-0.5)*0.2 });
+        function draw() { if(!ctx) return; ctx.clearRect(0,0,width,height); for(let p of particles) { ctx.beginPath(); ctx.arc(p.x, p.y, p.radius, 0, Math.PI*2); ctx.fillStyle = `rgba(255, 94, 46, ${p.alpha})`; ctx.fill(); p.x += p.speedX; p.y += p.speedY; if(p.x<0) p.x=width; if(p.x>width) p.x=0; if(p.y<0) p.y=height; if(p.y>height) p.y=0; } requestAnimationFrame(draw); }
+        draw();
+    }
+    initParticles();
+
+    (async () => {
+        state.deviceId = await getDeviceFingerprint();
+        const synced = await fetchPublicModules();
+        if (!synced) loadCustomModules();
+        await refreshSession();
+        render();
+        if(refreshTimer) clearInterval(refreshTimer);
+        refreshTimer = setInterval(() => { if(!state.adminMode) refreshSession(); }, 60000);
+        addTerminalLog("Warehouse terminal online", true);
+    })();
+</script>
+</body>
+</html>

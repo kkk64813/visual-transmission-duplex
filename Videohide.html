@@ -1,0 +1,1218 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+
+<script>
+(async () => {
+  const API_BASE = 'https://mg-secret-vault.mgjack13.workers.dev';
+  try {
+    const resp = await fetch(`${API_BASE}/api/check-module?module=VIDEOHIDE`, {
+      credentials: 'include'
+    });
+    const data = await resp.json();
+    if (!data.allowed) {
+      alert('Please activate your license.');
+      location.href = 'index.html';
+      return;
+    }
+  } catch (err) {
+    alert('License verification failed.');
+    location.href = 'index.html';
+  }
+})();
+</script>
+
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+  <title>CyberSteg — Video Steganography</title>
+  <style>
+    :root {
+      --bg: #050505;
+      --panel: #121212;
+      --text: #ff8c00;
+      --text2: #d98b2b;
+      --accent: #ffb347;
+      --glow: rgba(255, 140, 0, 0.4);
+      --danger: #ff4040;
+      --success: #40ff80;
+      --font: 'Courier New', 'Fira Code', monospace;
+      --border-angle: 4px;
+      --scanline-opacity: 0.08;
+    }
+
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--font);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow-x: hidden;
+      position: relative;
+    }
+
+    body::before {
+      content: "";
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.45'/%3E%3C/svg%3E");
+      background-repeat: repeat;
+      pointer-events: none;
+      z-index: 100;
+      mix-blend-mode: overlay;
+      opacity: 0.7;
+    }
+
+    body::after {
+      content: "";
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: repeating-linear-gradient(0deg, rgba(0,0,0,0.15) 0px, rgba(0,0,0,0.15) 1px, transparent 1px, transparent 3px);
+      pointer-events: none;
+      z-index: 101;
+      opacity: var(--scanline-opacity);
+      animation: scanlineMove 8s linear infinite;
+    }
+
+    @keyframes scanlineMove {
+      0% { transform: translateY(0); }
+      100% { transform: translateY(20px); }
+    }
+
+    .particle {
+      position: fixed;
+      background: var(--accent);
+      opacity: 0.15;
+      border-radius: 50%;
+      filter: blur(1px);
+      pointer-events: none;
+      z-index: 99;
+      animation: floatParticle linear infinite;
+    }
+
+    @keyframes floatParticle {
+      0% { transform: translate(0, 100vh) scale(0); opacity: 0; }
+      10% { opacity: 0.3; }
+      90% { opacity: 0.3; }
+      100% { transform: translate(20vw, -10vh) scale(1.5); opacity: 0; }
+    }
+
+    .app-container {
+      position: relative;
+      z-index: 200;
+      max-width: 1400px;
+      margin: 0 auto;
+      padding: 20px;
+      width: 100%;
+      flex: 1;
+    }
+
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 15px;
+      margin-bottom: 20px;
+    }
+    .logo {
+      font-size: 1.8rem;
+      font-weight: bold;
+      letter-spacing: 2px;
+      text-shadow: 0 0 15px var(--glow);
+      color: var(--accent);
+    }
+    .header-actions {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+    }
+    .lang-switch {
+      display: flex;
+      gap: 10px;
+    }
+    .lang-btn, .home-btn {
+      background: transparent;
+      border: 1px solid var(--text2);
+      color: var(--text);
+      padding: 8px 18px;
+      clip-path: polygon(10% 0%, 100% 0%, 90% 100%, 0% 100%);
+      cursor: pointer;
+      font-family: var(--font);
+      font-size: 0.9rem;
+      transition: 0.2s;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      background: rgba(18,18,18,0.8);
+      backdrop-filter: blur(5px);
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+    }
+    .lang-btn.active {
+      background: var(--accent);
+      color: #000;
+      border-color: var(--accent);
+      box-shadow: 0 0 15px var(--glow);
+    }
+    .home-btn:hover {
+      border-color: var(--accent);
+      box-shadow: 0 0 15px var(--glow);
+      color: var(--accent);
+    }
+
+    .tabs {
+      display: flex;
+      gap: 5px;
+      margin-bottom: 25px;
+      border-bottom: 2px solid #2a2a2a;
+    }
+    .tab-btn {
+      background: none;
+      border: none;
+      color: var(--text2);
+      font-size: 1.1rem;
+      padding: 10px 25px;
+      cursor: pointer;
+      position: relative;
+      font-family: var(--font);
+      letter-spacing: 1px;
+      clip-path: polygon(10% 0, 100% 0, 90% 100%, 0% 100%);
+      background: rgba(18,18,18,0.6);
+      transition: 0.2s;
+    }
+    .tab-btn.active {
+      color: var(--accent);
+      background: rgba(255,140,0,0.1);
+      box-shadow: 0 0 18px var(--glow);
+    }
+    .tab-btn.active::after {
+      content: "";
+      position: absolute;
+      bottom: -2px;
+      left: 10%;
+      width: 80%;
+      height: 3px;
+      background: var(--accent);
+      box-shadow: 0 0 20px var(--glow);
+    }
+
+    .tab-content {
+      display: none;
+      grid-template-columns: 1fr 1fr;
+      gap: 20px;
+    }
+    .tab-content.active {
+      display: grid;
+    }
+    @media (max-width: 768px) {
+      .tab-content.active {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .panel {
+      background: var(--panel);
+      border: 1px solid #2a2a2a;
+      padding: 18px;
+      clip-path: polygon(2% 0, 100% 0, 98% 100%, 0% 100%);
+      backdrop-filter: blur(5px);
+      box-shadow: 0 0 20px rgba(0,0,0,0.7);
+    }
+
+    .panel h3 {
+      color: var(--accent);
+      margin-bottom: 15px;
+      font-size: 1rem;
+      letter-spacing: 1px;
+      border-left: 3px solid var(--accent);
+      padding-left: 10px;
+    }
+
+    .custom-input, .custom-select {
+      width: 100%;
+      background: rgba(20,20,20,0.8);
+      border: 1px solid #444;
+      border-radius: 4px;
+      padding: 12px 15px;
+      color: var(--text);
+      font-family: var(--font);
+      clip-path: polygon(5% 0, 100% 0, 95% 100%, 0% 100%);
+      backdrop-filter: blur(4px);
+      outline: none;
+      transition: 0.25s;
+      font-size: 0.9rem;
+    }
+    .custom-input:focus, .custom-select:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 18px var(--glow);
+    }
+
+    .cyber-btn {
+      background: linear-gradient(135deg, #1a1a1a 0%, #0d0d0d 100%);
+      border: 1px solid var(--text2);
+      color: var(--accent);
+      padding: 12px 28px;
+      font-family: var(--font);
+      font-size: 1rem;
+      text-transform: uppercase;
+      letter-spacing: 2px;
+      clip-path: polygon(12% 0, 100% 0, 88% 100%, 0% 100%);
+      cursor: pointer;
+      transition: 0.2s;
+      position: relative;
+      overflow: hidden;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+    }
+    .cyber-btn:hover {
+      background: #1f1f1f;
+      border-color: var(--accent);
+      box-shadow: 0 0 25px var(--glow);
+      transform: scale(1.02);
+    }
+    .cyber-btn:active {
+      transform: scale(0.96);
+    }
+    .cyber-btn.primary {
+      background: var(--accent);
+      color: #000;
+      border-color: var(--accent);
+      font-weight: bold;
+    }
+
+    .drop-zone {
+      border: 2px dashed #444;
+      border-radius: 10px;
+      padding: 30px;
+      text-align: center;
+      transition: 0.3s;
+      background: rgba(18,18,18,0.7);
+      backdrop-filter: blur(5px);
+      animation: breathe 3s infinite;
+      cursor: pointer;
+      clip-path: polygon(3% 0, 100% 0, 97% 100%, 0% 100%);
+    }
+    @keyframes breathe {
+      0%, 100% { border-color: #444; box-shadow: 0 0 5px rgba(255,140,0,0.1); }
+      50% { border-color: var(--text2); box-shadow: 0 0 20px var(--glow); }
+    }
+    .drop-zone.drag-over {
+      border-color: var(--accent);
+      background: rgba(255,140,0,0.08);
+      box-shadow: 0 0 35px var(--glow);
+    }
+
+    .energy-bar {
+      width: 100%;
+      height: 22px;
+      background: #1a1a1a;
+      border: 1px solid #333;
+      position: relative;
+      overflow: hidden;
+      clip-path: polygon(3% 0, 100% 0, 97% 100%, 0% 100%);
+      margin: 10px 0;
+    }
+    .energy-fill {
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, #ff8c00, #ffb347, #ff8c00);
+      background-size: 200% 100%;
+      animation: energyPulse 1.5s infinite;
+      transition: width 0.2s;
+      position: relative;
+    }
+    @keyframes energyPulse {
+      0% { background-position: 0% 50%; }
+      100% { background-position: 200% 50%; }
+    }
+    .energy-text {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      font-size: 0.8rem;
+      color: #000;
+      font-weight: bold;
+      text-shadow: 0 0 5px white;
+      white-space: nowrap;
+    }
+
+    .terminal {
+      background: #0a0a0a;
+      border: 1px solid #2a2a2a;
+      padding: 15px;
+      height: 250px;
+      overflow-y: auto;
+      font-size: 0.8rem;
+      color: #ff8c00;
+      font-family: var(--font);
+      margin-top: 20px;
+      clip-path: polygon(2% 0, 100% 0, 98% 100%, 0% 100%);
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+    .terminal .log-entry {
+      border-bottom: 1px solid #1a1a1a;
+      padding: 3px 0;
+      animation: fadeIn 0.3s;
+    }
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateX(-5px); }
+    }
+    .log-time {
+      color: #666;
+      margin-right: 10px;
+    }
+
+    .flex-row {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+    .mt-15 { margin-top: 15px; }
+    .mb-15 { margin-bottom: 15px; }
+    .w-full { width: 100%; }
+    .hidden { display: none !important; }
+
+    video, canvas {
+      max-width: 100%;
+      background: #000;
+    }
+  </style>
+</head>
+<body>
+<div class="app-container">
+  <div class="header">
+    <div class="logo">⚡ CYBERSTEG</div>
+    <div class="header-actions">
+      <div class="lang-switch">
+        <button class="lang-btn active" data-lang="en">English</button>
+        <button class="lang-btn" data-lang="zh">中文</button>
+      </div>
+      <a href="index.html" class="home-btn" data-i18n="home">🏠 Home</a>
+    </div>
+  </div>
+
+  <div class="tabs">
+    <button class="tab-btn active" data-tab="hide" data-i18n="tab_hide">Hide</button>
+    <button class="tab-btn" data-tab="extract" data-i18n="tab_extract">Extract</button>
+  </div>
+
+  <div id="tab-hide" class="tab-content active">
+    <div class="panel">
+      <h3 data-i18n="video_source">📹 Video Source</h3>
+      <div class="flex-row mb-15">
+        <button class="cyber-btn" id="genVideoBtn" data-i18n="gen_video">Generate Synthetic Video</button>
+        <span data-i18n="or_upload">or</span>
+        <input type="file" id="uploadVideoInput" accept="video/*" class="custom-input" style="width:auto; display:none;">
+        <button class="cyber-btn" id="uploadVideoBtn" data-i18n="upload_video">Upload Video</button>
+      </div>
+      <div class="flex-row">
+        <label data-i18n="mode">Mode:</label>
+        <select id="videoModeSelect" class="custom-select" style="width:auto;">
+          <option value="noise">Noise</option>
+          <option value="glitch">Glitch</option>
+          <option value="plain_dark">Plain Dark</option>
+          <option value="security_camera">Security Camera</option>
+          <option value="ambient">Ambient</option>
+        </select>
+        <label data-i18n="duration">Duration (s):</label>
+        <input type="number" id="durationInput" value="8" min="1" max="600" class="custom-input" style="width:80px;">
+        <button class="cyber-btn" id="longLoopBtn" data-i18n="long_loop">Long Loop (300-600s)</button>
+      </div>
+      <video id="videoPreviewHide" controls class="mt-15" style="display:none; width:100%;"></video>
+    </div>
+
+    <div class="panel">
+      <h3 data-i18n="file_to_hide">📁 File to Hide</h3>
+      <div class="drop-zone" id="dropZoneHide" data-i18n="drop_zone">Drop file here or click to select</div>
+      <input type="file" id="secretFileInput" style="display:none;">
+      <div id="fileAnalysis" class="hidden mt-15">
+        <div><span data-i18n="filename">Name:</span> <span id="analysisName"></span></div>
+        <div><span data-i18n="extension">Extension:</span> <span id="analysisExt"></span></div>
+        <div><span data-i18n="mime">MIME:</span> <span id="analysisMime"></span></div>
+        <div><span data-i18n="size">Size:</span> <span id="analysisSize"></span></div>
+        <div class="mt-15"><span data-i18n="hex_preview">Hex Preview (64 bytes):</span><pre id="hexPreview" style="background:#000;padding:5px;color:#0f0;overflow:auto;"></pre></div>
+        <div><span data-i18n="entropy">Shannon Entropy:</span> <span id="entropyValue" style="font-weight:bold;"></span></div>
+        <div class="energy-bar" style="height:15px;"><div id="entropyBar" class="energy-fill" style="width:0%; transition:0.3s;"></div></div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h3 data-i18n="password_settings">🔐 Password</h3>
+      <input type="password" id="passwordInput" class="custom-input" placeholder="Enter password" data-i18n-placeholder="password_placeholder">
+      <div class="flex-row mt-15">
+        <span data-i18n="strength">Strength:</span>
+        <span id="passwordStrengthText">-</span>
+        <div class="energy-bar" style="width:120px; height:12px;"><div id="passwordStrengthBar" class="energy-fill" style="width:0%;"></div></div>
+      </div>
+      <div class="mt-15">
+        <label><input type="checkbox" id="enableDecoyCheck"> <span data-i18n="enable_decoy">Enable Decoy (fake password)</span></label>
+      </div>
+      <div id="decoySection" class="hidden mt-15">
+        <input type="password" id="decoyPasswordInput" class="custom-input" placeholder="Decoy password" data-i18n-placeholder="decoy_password_placeholder">
+        <div class="mt-15"><span data-i18n="decoy_file">Decoy file (revealed with decoy password):</span></div>
+        <input type="file" id="decoyFileInput" style="display:none;">
+        <button class="cyber-btn" id="selectDecoyFileBtn" data-i18n="select_decoy_file">Select Decoy File</button>
+        <span id="decoyFileName" style="margin-left:10px;"></span>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h3 data-i18n="embed_options">⚙️ Embed Options</h3>
+      <div class="flex-row">
+        <label data-i18n="embed_mode">Mode:</label>
+        <select id="embedModeSelect" class="custom-select" style="width:auto;">
+          <option value="append">Append</option>
+          <option value="interleave">Interleave (WebM only)</option>
+        </select>
+        <label><input type="checkbox" id="cleanMetadataCheck" checked> <span data-i18n="clean_metadata">Clean metadata</span></label>
+      </div>
+      <div class="mt-15">
+        <button id="startHideBtn" class="cyber-btn primary w-full" data-i18n="start_hide">⚡ Start Embedding</button>
+      </div>
+      <div id="hideProgress" class="hidden mt-15">
+        <div class="energy-bar"><div id="hideProgressFill" class="energy-fill" style="width:0%;"><span class="energy-text" id="hideProgressText">0%</span></div></div>
+      </div>
+    </div>
+  </div>
+
+  <div id="tab-extract" class="tab-content">
+    <div class="panel">
+      <h3 data-i18n="load_stego_video">📥 Load Stego Video</h3>
+      <div class="drop-zone" id="dropZoneExtract" data-i18n="drop_zone_extract">Drop stego video here or click</div>
+      <input type="file" id="extractVideoInput" accept="video/*" style="display:none;">
+      <video id="videoPreviewExtract" controls class="mt-15" style="display:none; width:100%;"></video>
+    </div>
+    <div class="panel">
+      <h3 data-i18n="extract_password">🔑 Password</h3>
+      <input type="password" id="extractPasswordInput" class="custom-input" placeholder="Enter password">
+      <button id="startExtractBtn" class="cyber-btn primary w-full mt-15" data-i18n="start_extract">🔓 Extract Hidden File</button>
+      <div id="extractProgress" class="hidden mt-15">
+        <div class="energy-bar"><div id="extractProgressFill" class="energy-fill" style="width:0%;"><span class="energy-text" id="extractProgressText">0%</span></div></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="terminal" id="terminal">
+    <div class="log-entry"><span class="log-time">[SYSTEM]</span> <span data-i18n="system_ready">System ready.</span></div>
+  </div>
+</div>
+
+<script>
+  (function() {
+    // ===================== i18n =====================
+    const i18n = {
+      en: {
+        home: '🏠 Home',
+        tab_hide: 'Hide', tab_extract: 'Extract', video_source: '📹 Video Source',
+        gen_video: 'Generate Synthetic Video', or_upload: 'or', upload_video: 'Upload Video',
+        mode: 'Mode:', duration: 'Duration (s):', long_loop: 'Long Loop (300-600s)',
+        file_to_hide: '📁 File to Hide', drop_zone: 'Drop file here or click to select',
+        password_settings: '🔐 Password', password_placeholder: 'Enter password',
+        strength: 'Strength:', enable_decoy: 'Enable Decoy (fake password)',
+        decoy_password_placeholder: 'Decoy password', decoy_file: 'Decoy file (revealed with decoy password):',
+        select_decoy_file: 'Select Decoy File', embed_options: '⚙️ Embed Options',
+        embed_mode: 'Mode:', clean_metadata: 'Clean metadata', start_hide: '⚡ Start Embedding',
+        load_stego_video: '📥 Load Stego Video', drop_zone_extract: 'Drop stego video here or click',
+        extract_password: '🔑 Password', start_extract: '🔓 Extract Hidden File',
+        system_ready: 'System ready.', filename: 'Name:', extension: 'Extension:',
+        mime: 'MIME:', size: 'Size:', hex_preview: 'Hex Preview (64 bytes):',
+        entropy: 'Shannon Entropy:', weak: 'Weak', medium: 'Medium', strong: 'Strong',
+        password_error: 'Password incorrect', extracting: 'Extracting...',
+        extraction_success: 'Extraction successful. Downloading...', embedding: 'Embedding...',
+        embed_success: 'Embedding completed.', error_generic: 'An error occurred',
+      },
+      zh: {
+        home: '🏠 首页',
+        tab_hide: '隐藏', tab_extract: '提取', video_source: '📹 视频源',
+        gen_video: '生成合成视频', or_upload: '或', upload_video: '上传视频',
+        mode: '模式:', duration: '时长 (秒):', long_loop: '长循环 (300-600秒)',
+        file_to_hide: '📁 待隐藏文件', drop_zone: '拖放文件到此处或点击选择',
+        password_settings: '🔐 密码', password_placeholder: '输入密码',
+        strength: '强度:', enable_decoy: '启用诱饵 (假密码)',
+        decoy_password_placeholder: '诱饵密码', decoy_file: '诱饵文件 (使用诱饵密码时提取):',
+        select_decoy_file: '选择诱饵文件', embed_options: '⚙️ 嵌入选项',
+        embed_mode: '模式:', clean_metadata: '清除元数据', start_hide: '⚡ 开始嵌入',
+        load_stego_video: '📥 加载隐写视频', drop_zone_extract: '拖放隐写视频到此处或点击',
+        extract_password: '🔑 密码', start_extract: '🔓 提取隐藏文件',
+        system_ready: '系统就绪。', filename: '文件名:', extension: '扩展名:',
+        mime: 'MIME:', size: '大小:', hex_preview: '十六进制预览 (64字节):',
+        entropy: '香农熵:', weak: '弱', medium: '中', strong: '强',
+        password_error: '密码错误', extracting: '提取中...',
+        extraction_success: '提取成功，正在下载...', embedding: '嵌入中...',
+        embed_success: '嵌入完成。', error_generic: '发生错误',
+      }
+    };
+    let currentLang = 'en';
+    function t(key) { return i18n[currentLang]?.[key] || key; }
+    function updateAllI18n() {
+      document.querySelectorAll('[data-i18n]').forEach(el => {
+        const key = el.getAttribute('data-i18n');
+        if (el.tagName === 'INPUT' && el.type === 'text' || el.tagName === 'TEXTAREA') return;
+        el.textContent = t(key);
+      });
+      document.querySelectorAll('[data-i18n-placeholder]').forEach(el => {
+        el.placeholder = t(el.getAttribute('data-i18n-placeholder'));
+      });
+    }
+    document.querySelectorAll('.lang-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const lang = btn.dataset.lang;
+        if (lang === currentLang) return;
+        currentLang = lang;
+        document.querySelectorAll('.lang-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        updateAllI18n();
+      });
+    });
+
+    const $ = (s) => document.querySelector(s);
+    const $$ = (s) => document.querySelectorAll(s);
+    const terminal = $('#terminal');
+    function log(message, type='info') {
+      const time = new Date().toTimeString().split(' ')[0];
+      const entry = document.createElement('div');
+      entry.className = 'log-entry';
+      entry.innerHTML = `<span class="log-time">[${time}]</span> ${message}`;
+      terminal.appendChild(entry);
+      terminal.scrollTop = terminal.scrollHeight;
+    }
+
+    $$('.tab-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const tab = btn.dataset.tab;
+        $$('.tab-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        $('#tab-hide').classList.toggle('active', tab === 'hide');
+        $('#tab-extract').classList.toggle('active', tab === 'extract');
+      });
+    });
+
+    function sha256(buffer) { return crypto.subtle.digest('SHA-256', buffer).then(h => new Uint8Array(h)); }
+    function bufferToHex(arr) { return Array.from(arr).map(b => b.toString(16).padStart(2, '0')).join(''); }
+    function concatUint8(arrays) {
+      let totalLen = arrays.reduce((acc, a) => acc + a.length, 0);
+      let res = new Uint8Array(totalLen);
+      let offset = 0;
+      for (let arr of arrays) { res.set(arr, offset); offset += arr.length; }
+      return res;
+    }
+
+    function createCryptoWorker() {
+      const workerCode = `
+        self.cryptoType = 'subtle';
+        const encoder = new TextEncoder();
+        function xorShift32(seed) {
+          let state = seed | 0;
+          return function() {
+            state ^= state << 13; state ^= state >> 17; state ^= state << 5;
+            return (state >>> 0) / 0xFFFFFFFF;
+          };
+        }
+        async function deriveKey(password, salt) {
+          const keyMaterial = await crypto.subtle.importKey('raw', encoder.encode(password), 'PBKDF2', false, ['deriveBits', 'deriveKey']);
+          return crypto.subtle.deriveBits({ name: 'PBKDF2', salt: salt, iterations: 120000, hash: 'SHA-256' }, keyMaterial, 256);
+        }
+        async function encryptAES(keyBytes, iv, data) {
+          const key = await crypto.subtle.importKey('raw', keyBytes, { name: 'AES-GCM' }, false, ['encrypt']);
+          return new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv: iv }, key, data));
+        }
+        async function decryptAES(keyBytes, iv, data) {
+          const key = await crypto.subtle.importKey('raw', keyBytes, { name: 'AES-GCM' }, false, ['decrypt']);
+          return new Uint8Array(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: iv }, key, data));
+        }
+        self.onmessage = async function(e) {
+          const { id, action, payload } = e.data;
+          try {
+            let result;
+            switch (action) {
+              case 'deriveKey': {
+                const key = await deriveKey(payload.password, payload.salt);
+                const hash = await crypto.subtle.digest('SHA-256', key);
+                result = { key: new Uint8Array(key), hash: new Uint8Array(hash) };
+                break;
+              }
+              case 'encryptChunk': {
+                const { key, iv, data, xorSeed, chunkIndex } = payload;
+                const rng = xorShift32(xorSeed + chunkIndex);
+                const xored = new Uint8Array(data.length);
+                for (let i=0; i<data.length; i++) xored[i] = data[i] ^ (Math.floor(rng() * 256) & 0xFF);
+                const encrypted = await encryptAES(key, iv, xored);
+                result = encrypted;
+                break;
+              }
+              case 'decryptChunk': {
+                const { key, iv, encryptedData, xorSeed, chunkIndex } = payload;
+                const decrypted = await decryptAES(key, iv, encryptedData);
+                const rng = xorShift32(xorSeed + chunkIndex);
+                const unxored = new Uint8Array(decrypted.length);
+                for (let i=0; i<decrypted.length; i++) unxored[i] = decrypted[i] ^ (Math.floor(rng() * 256) & 0xFF);
+                result = unxored;
+                break;
+              }
+              case 'sha256': {
+                result = new Uint8Array(await crypto.subtle.digest('SHA-256', payload.data));
+                break;
+              }
+              default: throw new Error('unknown action');
+            }
+            self.postMessage({ id, success: true, result: result });
+          } catch (err) {
+            self.postMessage({ id, success: false, error: err.message });
+          }
+        };
+      `;
+      const blob = new Blob([workerCode], { type: 'application/javascript' });
+      return new Worker(URL.createObjectURL(blob));
+    }
+
+    const cryptoWorker = createCryptoWorker();
+    let workerRequestId = 0;
+    function workerRPC(action, payload, transferables) {
+      return new Promise((resolve, reject) => {
+        const id = ++workerRequestId;
+        const handler = (e) => {
+          if (e.data.id !== id) return;
+          cryptoWorker.removeEventListener('message', handler);
+          if (e.data.success) resolve(e.data.result);
+          else reject(new Error(e.data.error));
+        };
+        cryptoWorker.addEventListener('message', handler);
+        cryptoWorker.postMessage({ id, action, payload }, transferables || []);
+      });
+    }
+
+    async function generateVideo(mode, durationSec, lowBitrate = false) {
+      const width = 480, height = 270, fps = 10;
+      const canvas = document.createElement('canvas');
+      canvas.width = width; canvas.height = height;
+      const ctx = canvas.getContext('2d');
+      const stream = canvas.captureStream(fps);
+      const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp8') ? 'video/webm;codecs=vp8' : 'video/webm';
+      const bitsPerSec = lowBitrate ? (80000 + Math.floor(Math.random()*40000)) : 500000;
+      const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: bitsPerSec });
+      const chunks = [];
+      recorder.ondataavailable = e => chunks.push(e.data);
+      const startTime = performance.now();
+      const targetMs = durationSec * 1000;
+      let stopped = false;
+      const stopPromise = new Promise(resolve => { recorder.onstop = () => resolve(new Blob(chunks, { type: 'video/webm' })); });
+      recorder.start(100);
+      function drawFrame() {
+        ctx.fillStyle = '#0a0a0a'; ctx.fillRect(0,0,width,height);
+        const time = (performance.now() - startTime) / 1000;
+        const rectX = (width/2 + Math.sin(time*1.3)*width*0.4) % width;
+        const rectY = (height/2 + Math.cos(time*0.9)*height*0.4) % height;
+        const rectW = 20 + Math.abs(Math.sin(time*2))*40;
+        const rectH = 20 + Math.abs(Math.cos(time*1.7))*40;
+        if (mode === 'noise') {
+          const imgData = ctx.createImageData(width, height);
+          for (let i=0; i<imgData.data.length; i+=4) { const v=Math.random()*255; imgData.data[i]=v; imgData.data[i+1]=v; imgData.data[i+2]=v; imgData.data[i+3]=255; }
+          ctx.putImageData(imgData,0,0);
+        } else if (mode === 'glitch') {
+          for (let y=0; y<height; y+=10) { ctx.fillStyle = `rgb(${Math.random()*255},${Math.random()*100},${Math.random()*255})`; ctx.fillRect(Math.random()*20-10, y, width+20, 5); }
+        } else if (mode === 'plain_dark') { ctx.fillStyle='#111'; ctx.fillRect(0,0,width,height); }
+        else if (mode === 'security_camera') {
+          ctx.fillStyle='#222'; ctx.fillRect(0,0,width,height);
+          ctx.fillStyle='#fff'; ctx.font='12px monospace'; ctx.fillText(new Date().toISOString(),10,20);
+          for (let i=0;i<100;i++) { ctx.fillStyle=`rgba(255,255,255,${Math.random()*0.1})`; ctx.fillRect(Math.random()*width,Math.random()*height,1,1); }
+        } else if (mode === 'ambient') {
+          const hue = (time*20)%360; ctx.fillStyle=`hsl(${hue},30%,10%)`; ctx.fillRect(0,0,width,height);
+        }
+        ctx.fillStyle='rgba(255,140,0,0.3)'; ctx.fillRect(rectX,rectY,rectW,rectH);
+      }
+      function animate() {
+        if (stopped) return;
+        drawFrame();
+        if (performance.now() - startTime >= targetMs) { stopped = true; recorder.stop(); }
+        else requestAnimationFrame(animate);
+      }
+      animate();
+      return stopPromise;
+    }
+
+    async function analyzeFile(file) {
+      const slice = file.slice(0, 64);
+      const buf = new Uint8Array(await slice.arrayBuffer());
+      const hexLines = [];
+      for (let i=0; i<buf.length; i+=16) {
+        const chunk = buf.slice(i,i+16);
+        const hex = Array.from(chunk).map(b=>b.toString(16).padStart(2,'0')).join(' ');
+        const ascii = Array.from(chunk).map(b=>(b>=32&&b<=126)?String.fromCharCode(b):'.').join('');
+        hexLines.push(`${i.toString(16).padStart(8,'0')}  ${hex.padEnd(48)} ${ascii}`);
+      }
+      const freq = new Array(256).fill(0);
+      for (let b of buf) freq[b]++;
+      let entropy = 0;
+      for (let f of freq) { if (f>0) { const p = f/buf.length; entropy -= p * Math.log2(p); } }
+      return { name: file.name, ext: file.name.split('.').pop() || '', mime: file.type || 'unknown', size: file.size, hexPreview: hexLines.join('\n'), entropy: entropy.toFixed(3) };
+    }
+
+    function calcPasswordEntropy(pwd) {
+      if (!pwd) return 0;
+      let range = 0;
+      if (/[a-z]/.test(pwd)) range+=26; if (/[A-Z]/.test(pwd)) range+=26;
+      if (/[0-9]/.test(pwd)) range+=10; if (/[^a-zA-Z0-9]/.test(pwd)) range+=33;
+      return pwd.length * Math.log2(range || 1);
+    }
+
+    async function embedProcess(videoBlob, secretFile, password, decoyPassword, decoyFile, embedMode, cleanMeta, progressCb) {
+      const CHUNK_SIZE = 8 * 1024 * 1024;
+      const mainSalt = crypto.getRandomValues(new Uint8Array(16));
+      const mainBaseIV = crypto.getRandomValues(new Uint8Array(12));
+      const mainXORSeed = crypto.getRandomValues(new Uint32Array(1))[0];
+      const mainKeyMaterial = await workerRPC('deriveKey', { password, salt: mainSalt });
+      const mainKey = mainKeyMaterial.key;
+      const mainPasswordHash = mainKeyMaterial.hash;
+
+      let decoyData = null;
+      if (decoyPassword && decoyFile) {
+        const decoySalt = crypto.getRandomValues(new Uint8Array(16));
+        const decoyXORSeed = crypto.getRandomValues(new Uint32Array(1))[0];
+        const decoyKeyMat = await workerRPC('deriveKey', { password: decoyPassword, salt: decoySalt });
+        decoyData = { salt: decoySalt, xorSeed: decoyXORSeed, key: decoyKeyMat.key, passwordHash: decoyKeyMat.hash, file: decoyFile };
+      }
+
+      const fileSize = secretFile.size;
+      const chunkCount = Math.ceil(fileSize / CHUNK_SIZE);
+      const offsetTable = new Array(chunkCount);
+      const encryptedChunks = [];
+      let currentOffset = 0;
+
+      for (let i=0; i<chunkCount; i++) {
+        const start = i * CHUNK_SIZE;
+        const end = Math.min(start + CHUNK_SIZE, fileSize);
+        const buffer = new Uint8Array(await secretFile.slice(start, end).arrayBuffer());
+        const iv = new Uint8Array(mainBaseIV);
+        new DataView(iv.buffer).setUint32(8, i, true);
+        const encrypted = await workerRPC('encryptChunk', { key: mainKey, iv, data: buffer, xorSeed: mainXORSeed, chunkIndex: i });
+        offsetTable[i] = currentOffset;
+        currentOffset += encrypted.length;
+        encryptedChunks.push(encrypted);
+        progressCb((i+1)/chunkCount * 0.9);
+      }
+
+      let fullSHA;
+      if (fileSize < 100*1024*1024) {
+        fullSHA = await workerRPC('sha256', { data: new Uint8Array(await secretFile.arrayBuffer()) });
+      } else {
+        fullSHA = await workerRPC('sha256', { data: new Uint8Array(await secretFile.slice(0, 10*1024*1024).arrayBuffer()) });
+        log('SHA256 computed on first 10MB only (large file).', 'warn');
+      }
+
+      const mainFileName = new TextEncoder().encode(secretFile.name);
+      const mainExt = new TextEncoder().encode(secretFile.name.split('.').pop() || '');
+      let indexSize = 5+1+2+16+12+32+4+4+8+2+mainFileName.length+1+mainExt.length+32 + chunkCount*8 + 4+5;
+      let decoyIndexData = null;
+
+      if (decoyData) {
+        const decoyFileSize = decoyData.file.size;
+        const decoyChunkCount = Math.ceil(decoyFileSize / CHUNK_SIZE);
+        const decoyOffsetTable = new Array(decoyChunkCount);
+        const decoyEncryptedChunks = [];
+        let decoyOffsetAcc = 0;
+        const decoyIV = new Uint8Array(mainBaseIV);
+        for (let i=0; i<decoyChunkCount; i++) {
+          const start = i * CHUNK_SIZE;
+          const end = Math.min(start + CHUNK_SIZE, decoyFileSize);
+          const buffer = new Uint8Array(await decoyData.file.slice(start, end).arrayBuffer());
+          const iv = new Uint8Array(decoyIV);
+          new DataView(iv.buffer).setUint32(8, i, true);
+          const enc = await workerRPC('encryptChunk', { key: decoyData.key, iv, data: buffer, xorSeed: decoyData.xorSeed, chunkIndex: i });
+          decoyOffsetTable[i] = decoyOffsetAcc;
+          decoyOffsetAcc += enc.length;
+          decoyEncryptedChunks.push(enc);
+        }
+        const decoySHA = await workerRPC('sha256', { data: new Uint8Array(await decoyData.file.arrayBuffer()) });
+        const decoyFileName = new TextEncoder().encode(decoyData.file.name);
+        const decoyExt = new TextEncoder().encode(decoyData.file.name.split('.').pop()||'');
+        indexSize += 16+32+4+4+8+2+decoyFileName.length+1+decoyExt.length+32 + decoyChunkCount*8;
+        decoyIndexData = {
+          salt: decoyData.salt, passwordHash: decoyData.passwordHash, xorSeed: decoyData.xorSeed,
+          chunkCount: decoyChunkCount, originalSize: decoyFileSize, fileName: decoyFileName,
+          ext: decoyExt, sha256: decoySHA, offsetTable: decoyOffsetTable, chunks: decoyEncryptedChunks
+        };
+      }
+
+      const indexBuffer = new ArrayBuffer(indexSize);
+      const view = new DataView(indexBuffer);
+      let pos = 0;
+      new Uint8Array(indexBuffer, pos, 5).set(new TextEncoder().encode('STGVD')); pos+=5;
+      view.setUint8(pos, 1); pos+=1;
+      let flags = 0;
+      if (decoyData) flags |= 1;
+      if (embedMode === 'interleave') flags |= 2;
+      view.setUint16(pos, flags, true); pos+=2;
+      new Uint8Array(indexBuffer, pos, 16).set(mainSalt); pos+=16;
+      new Uint8Array(indexBuffer, pos, 12).set(mainBaseIV); pos+=12;
+      new Uint8Array(indexBuffer, pos, 32).set(mainPasswordHash); pos+=32;
+      view.setUint32(pos, mainXORSeed, true); pos+=4;
+      view.setUint32(pos, chunkCount, true); pos+=4;
+      view.setBigUint64(pos, BigInt(fileSize), true); pos+=8;
+      view.setUint16(pos, mainFileName.length, true); pos+=2;
+      new Uint8Array(indexBuffer, pos, mainFileName.length).set(mainFileName); pos+=mainFileName.length;
+      view.setUint8(pos, mainExt.length); pos+=1;
+      new Uint8Array(indexBuffer, pos, mainExt.length).set(mainExt); pos+=mainExt.length;
+      new Uint8Array(indexBuffer, pos, 32).set(fullSHA); pos+=32;
+      for (let off of offsetTable) { view.setBigUint64(pos, BigInt(off), true); pos+=8; }
+
+      if (decoyIndexData) {
+        new Uint8Array(indexBuffer, pos, 16).set(decoyIndexData.salt); pos+=16;
+        new Uint8Array(indexBuffer, pos, 32).set(decoyIndexData.passwordHash); pos+=32;
+        view.setUint32(pos, decoyIndexData.xorSeed, true); pos+=4;
+        view.setUint32(pos, decoyIndexData.chunkCount, true); pos+=4;
+        view.setBigUint64(pos, BigInt(decoyIndexData.originalSize), true); pos+=8;
+        view.setUint16(pos, decoyIndexData.fileName.length, true); pos+=2;
+        new Uint8Array(indexBuffer, pos, decoyIndexData.fileName.length).set(decoyIndexData.fileName); pos+=decoyIndexData.fileName.length;
+        view.setUint8(pos, decoyIndexData.ext.length); pos+=1;
+        new Uint8Array(indexBuffer, pos, decoyIndexData.ext.length).set(decoyIndexData.ext); pos+=decoyIndexData.ext.length;
+        new Uint8Array(indexBuffer, pos, 32).set(decoyIndexData.sha256); pos+=32;
+        for (let off of decoyIndexData.offsetTable) { view.setBigUint64(pos, BigInt(off), true); pos+=8; }
+      }
+
+      view.setUint32(pos, indexSize, true); pos+=4;
+      new Uint8Array(indexBuffer, pos, 5).set(new TextEncoder().encode('STGVD'));
+
+      const finalParts = [videoBlob];
+      finalParts.push(...encryptedChunks);
+      if (decoyIndexData) finalParts.push(...decoyIndexData.chunks);
+      finalParts.push(new Blob([indexBuffer]));
+      return new Blob(finalParts, { type: videoBlob.type || 'video/webm' });
+    }
+
+    async function extractProcess(videoFile, password, progressCb) {
+      const CHUNK_SIZE = 8 * 1024 * 1024;
+      const tailSize = Math.min(10*1024*1024, videoFile.size);
+      const tailBuffer = new Uint8Array(await videoFile.slice(videoFile.size - tailSize, videoFile.size).arrayBuffer());
+      const magic = new TextEncoder().encode('STGVD');
+      let indexSize = 0;
+      let indexStart = -1;
+      for (let i = tailBuffer.length - 5; i >= 0; i--) {
+        if (tailBuffer[i] === magic[0] && tailBuffer[i+1] === magic[1] && tailBuffer[i+2] === magic[2] && tailBuffer[i+3] === magic[3] && tailBuffer[i+4] === magic[4]) {
+          const indexSizeOffset = i - 4;
+          if (indexSizeOffset >= 0) {
+            indexSize = new DataView(tailBuffer.buffer, indexSizeOffset, 4).getUint32(0, true);
+            indexStart = videoFile.size - indexSize; // 索引块紧贴文件末尾
+            break;
+          }
+        }
+      }
+      if (indexStart < 0) throw new Error('No hidden data found');
+
+      const indexRaw = new Uint8Array(await videoFile.slice(indexStart, indexStart + indexSize).arrayBuffer());
+      const view = new DataView(indexRaw.buffer);
+      let pos = 0;
+      if (new TextDecoder().decode(indexRaw.slice(pos, pos+5)) !== 'STGVD') throw new Error('Invalid index');
+      pos += 5;
+      const version = view.getUint8(pos); pos+=1;
+      const flags = view.getUint16(pos, true); pos+=2;
+      const hasDecoy = (flags & 1) !== 0;
+      const mainSalt = indexRaw.slice(pos, pos+16); pos+=16;
+      const mainBaseIV = indexRaw.slice(pos, pos+12); pos+=12;
+      const mainPasswordHash = indexRaw.slice(pos, pos+32); pos+=32;
+      const mainXORSeed = view.getUint32(pos, true); pos+=4;
+      const mainChunkCount = view.getUint32(pos, true); pos+=4;
+      const mainOriginalSize = Number(view.getBigUint64(pos, true)); pos+=8;
+      const mainFileNameLen = view.getUint16(pos, true); pos+=2;
+      const mainFileName = new TextDecoder().decode(indexRaw.slice(pos, pos+mainFileNameLen)); pos+=mainFileNameLen;
+      const mainExtLen = view.getUint8(pos); pos+=1;
+      const mainExt = new TextDecoder().decode(indexRaw.slice(pos, pos+mainExtLen)); pos+=mainExtLen;
+      const mainSHA256 = indexRaw.slice(pos, pos+32); pos+=32;
+      const mainOffsetTable = [];
+      for (let i=0; i<mainChunkCount; i++) { mainOffsetTable.push(Number(view.getBigUint64(pos, true))); pos+=8; }
+
+      let decoyData = null;
+      if (hasDecoy) {
+        const decoySalt = indexRaw.slice(pos, pos+16); pos+=16;
+        const decoyPasswordHash = indexRaw.slice(pos, pos+32); pos+=32;
+        const decoyXORSeed = view.getUint32(pos, true); pos+=4;
+        const decoyChunkCount = view.getUint32(pos, true); pos+=4;
+        const decoyOriginalSize = Number(view.getBigUint64(pos, true)); pos+=8;
+        const decoyFileNameLen = view.getUint16(pos, true); pos+=2;
+        const decoyFileName = new TextDecoder().decode(indexRaw.slice(pos, pos+decoyFileNameLen)); pos+=decoyFileNameLen;
+        const decoyExtLen = view.getUint8(pos); pos+=1;
+        const decoyExt = new TextDecoder().decode(indexRaw.slice(pos, pos+decoyExtLen)); pos+=decoyExtLen;
+        const decoySHA256 = indexRaw.slice(pos, pos+32); pos+=32;
+        const decoyOffsetTable = [];
+        for (let i=0; i<decoyChunkCount; i++) { decoyOffsetTable.push(Number(view.getBigUint64(pos, true))); pos+=8; }
+        decoyData = { salt: decoySalt, passwordHash: decoyPasswordHash, xorSeed: decoyXORSeed, chunkCount: decoyChunkCount,
+          originalSize: decoyOriginalSize, fileName: decoyFileName, ext: decoyExt, sha256: decoySHA256, offsetTable: decoyOffsetTable };
+      }
+
+      const mainKeyMat = await workerRPC('deriveKey', { password, salt: mainSalt });
+      const mainMatch = bufferToHex(mainKeyMat.hash) === bufferToHex(mainPasswordHash);
+      let target = null;
+      if (mainMatch) {
+        target = { key: mainKeyMat.key, xorSeed: mainXORSeed, chunkCount: mainChunkCount, originalSize: mainOriginalSize,
+          fileName: mainFileName, ext: mainExt, sha256: mainSHA256, offsetTable: mainOffsetTable, isDecoy: false };
+      } else if (hasDecoy && decoyData) {
+        const decoyKeyMat = await workerRPC('deriveKey', { password, salt: decoyData.salt });
+        if (bufferToHex(decoyKeyMat.hash) === bufferToHex(decoyData.passwordHash)) {
+          target = { key: decoyKeyMat.key, xorSeed: decoyData.xorSeed, chunkCount: decoyData.chunkCount,
+            originalSize: decoyData.originalSize, fileName: decoyData.fileName, ext: decoyData.ext,
+            sha256: decoyData.sha256, offsetTable: decoyData.offsetTable, isDecoy: true };
+        }
+      }
+      if (!target) throw new Error('Password incorrect');
+
+      const mainEncTotalSize = mainOriginalSize + mainChunkCount * 16;
+      const decoyEncTotalSize = hasDecoy ? (decoyData.originalSize + decoyData.chunkCount * 16) : 0;
+      let dataStart;
+      if (target.isDecoy) {
+        dataStart = indexStart - decoyEncTotalSize;
+      } else {
+        dataStart = indexStart - mainEncTotalSize - decoyEncTotalSize;
+      }
+
+      const chunkSizes = [];
+      for (let i=0; i<target.chunkCount; i++) {
+        const plainBlockSize = (i === target.chunkCount - 1) ? target.originalSize - i * CHUNK_SIZE : CHUNK_SIZE;
+        chunkSizes.push(plainBlockSize + 16);
+      }
+
+      const decryptedChunks = [];
+      for (let i=0; i<target.chunkCount; i++) {
+        const encSlice = videoFile.slice(dataStart + target.offsetTable[i], dataStart + target.offsetTable[i] + chunkSizes[i]);
+        const encBuffer = new Uint8Array(await encSlice.arrayBuffer());
+        const iv = new Uint8Array(mainBaseIV);
+        new DataView(iv.buffer).setUint32(8, i, true);
+        const dec = await workerRPC('decryptChunk', { key: target.key, iv, encryptedData: encBuffer, xorSeed: target.xorSeed, chunkIndex: i });
+        decryptedChunks.push(dec);
+        progressCb((i+1)/target.chunkCount);
+      }
+      const finalFile = concatUint8(decryptedChunks).slice(0, target.originalSize);
+      const finalSHA = await workerRPC('sha256', { data: finalFile });
+      const shaMatch = bufferToHex(finalSHA) === bufferToHex(target.sha256);
+      return { data: finalFile, fileName: target.fileName + (target.ext ? '.'+target.ext : ''), sha256Match: shaMatch, isDecoy: target.isDecoy };
+    }
+
+    const genVideoBtn = $('#genVideoBtn');
+    const uploadVideoInput = $('#uploadVideoInput');
+    const uploadVideoBtn = $('#uploadVideoBtn');
+    const videoModeSelect = $('#videoModeSelect');
+    const durationInput = $('#durationInput');
+    const longLoopBtn = $('#longLoopBtn');
+    const videoPreviewHide = $('#videoPreviewHide');
+    const dropZoneHide = $('#dropZoneHide');
+    const secretFileInput = $('#secretFileInput');
+    const fileAnalysisDiv = $('#fileAnalysis');
+    const analysisName = $('#analysisName');
+    const analysisExt = $('#analysisExt');
+    const analysisMime = $('#analysisMime');
+    const analysisSize = $('#analysisSize');
+    const hexPreview = $('#hexPreview');
+    const entropyValue = $('#entropyValue');
+    const entropyBar = $('#entropyBar');
+    const passwordInput = $('#passwordInput');
+    const passwordStrengthText = $('#passwordStrengthText');
+    const passwordStrengthBar = $('#passwordStrengthBar');
+    const enableDecoyCheck = $('#enableDecoyCheck');
+    const decoySection = $('#decoySection');
+    const decoyPasswordInput = $('#decoyPasswordInput');
+    const decoyFileInput = $('#decoyFileInput');
+    const selectDecoyFileBtn = $('#selectDecoyFileBtn');
+    const decoyFileNameSpan = $('#decoyFileName');
+    const embedModeSelect = $('#embedModeSelect');
+    const cleanMetadataCheck = $('#cleanMetadataCheck');
+    const startHideBtn = $('#startHideBtn');
+    const hideProgress = $('#hideProgress');
+    const hideProgressFill = $('#hideProgressFill');
+    const hideProgressText = $('#hideProgressText');
+    let currentVideoBlob = null;
+    let currentSecretFile = null;
+    let currentDecoyFile = null;
+
+    genVideoBtn.addEventListener('click', async () => {
+      const mode = videoModeSelect.value;
+      let duration = parseInt(durationInput.value, 10);
+      if (isNaN(duration) || duration<1) duration=8;
+      log(`Generating ${mode} video ${duration}s...`);
+      const blob = await generateVideo(mode, duration, false);
+      currentVideoBlob = blob;
+      videoPreviewHide.src = URL.createObjectURL(blob);
+      videoPreviewHide.style.display = 'block';
+      log('Video generated successfully.');
+    });
+
+    longLoopBtn.addEventListener('click', async () => {
+      const duration = 300 + Math.floor(Math.random()*301);
+      log(`Long loop mode: ${duration}s video generating...`);
+      const blob = await generateVideo(videoModeSelect.value, duration, true);
+      currentVideoBlob = blob;
+      videoPreviewHide.src = URL.createObjectURL(blob);
+      videoPreviewHide.style.display = 'block';
+      log('Long loop video ready.');
+    });
+
+    uploadVideoBtn.addEventListener('click', () => uploadVideoInput.click());
+    uploadVideoInput.addEventListener('change', async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      currentVideoBlob = file;
+      videoPreviewHide.src = URL.createObjectURL(file);
+      videoPreviewHide.style.display = 'block';
+      log(`Video uploaded: ${file.name}`);
+    });
+
+    dropZoneHide.addEventListener('click', () => secretFileInput.click());
+    dropZoneHide.addEventListener('dragover', e => { e.preventDefault(); dropZoneHide.classList.add('drag-over'); });
+    dropZoneHide.addEventListener('dragleave', () => dropZoneHide.classList.remove('drag-over'));
+    dropZoneHide.addEventListener('drop', e => {
+      e.preventDefault(); dropZoneHide.classList.remove('drag-over');
+      const file = e.dataTransfer.files[0]; if (file) loadSecretFile(file);
+    });
+    secretFileInput.addEventListener('change', e => { if (e.target.files[0]) loadSecretFile(e.target.files[0]); });
+
+    async function loadSecretFile(file) {
+      currentSecretFile = file;
+      const analysis = await analyzeFile(file);
+      analysisName.textContent = analysis.name;
+      analysisExt.textContent = analysis.ext;
+      analysisMime.textContent = analysis.mime;
+      analysisSize.textContent = `${analysis.size} bytes`;
+      hexPreview.textContent = analysis.hexPreview;
+      entropyValue.textContent = analysis.entropy;
+      const ent = parseFloat(analysis.entropy);
+      entropyBar.style.width = `${(ent/8)*100}%`;
+      entropyBar.style.background = ent<4 ? 'var(--success)' : (ent<6 ? '#ffaa00' : 'var(--danger)');
+      fileAnalysisDiv.classList.remove('hidden');
+      log(`File analyzed: ${analysis.name}, entropy ${analysis.entropy}`);
+    }
+
+    passwordInput.addEventListener('input', () => {
+      const ent = calcPasswordEntropy(passwordInput.value);
+      passwordStrengthText.textContent = ent<28 ? t('weak') : (ent<50 ? t('medium') : t('strong'));
+      passwordStrengthBar.style.width = `${Math.min(ent/80*100, 100)}%`;
+      passwordStrengthBar.style.background = ent<28 ? 'var(--danger)' : (ent<50 ? '#ffaa00' : 'var(--success)');
+    });
+
+    enableDecoyCheck.addEventListener('change', () => decoySection.classList.toggle('hidden', !enableDecoyCheck.checked));
+    selectDecoyFileBtn.addEventListener('click', () => decoyFileInput.click());
+    decoyFileInput.addEventListener('change', e => {
+      if (e.target.files[0]) { currentDecoyFile = e.target.files[0]; decoyFileNameSpan.textContent = currentDecoyFile.name; }
+    });
+
+    startHideBtn.addEventListener('click', async () => {
+      if (!currentVideoBlob || !currentSecretFile) { alert('Missing video or secret file'); return; }
+      const password = passwordInput.value;
+      if (!password) { alert('Password required'); return; }
+      let decoyPassword = null, decoyFile = null;
+      if (enableDecoyCheck.checked) {
+        decoyPassword = decoyPasswordInput.value;
+        decoyFile = currentDecoyFile;
+        if (!decoyPassword || !decoyFile) { alert('Decoy password and file required'); return; }
+      }
+      hideProgress.classList.remove('hidden');
+      startHideBtn.disabled = true;
+      log('Starting embedding...');
+      try {
+        let videoToUse = currentVideoBlob;
+        if (cleanMetadataCheck.checked && currentVideoBlob instanceof File) {
+          log('Cleaning metadata by re-encoding...');
+          videoToUse = await generateVideo('plain_dark', 5, true);
+        }
+        const resultBlob = await embedProcess(videoToUse, currentSecretFile, password, decoyPassword, decoyFile, embedModeSelect.value, cleanMetadataCheck.checked, (progress) => {
+          hideProgressFill.style.width = `${progress*100}%`;
+          hideProgressText.textContent = `${Math.round(progress*100)}%`;
+        });
+        hideProgressFill.style.width = '100%'; hideProgressText.textContent = '100%';
+        log('Embedding completed. Saving file...');
+        if ('showSaveFilePicker' in window) {
+          const handle = await window.showSaveFilePicker({ suggestedName: 'stego_video.webm' });
+          const writable = await handle.createWritable();
+          await writable.write(resultBlob);
+          await writable.close();
+        } else {
+          const url = URL.createObjectURL(resultBlob);
+          const a = document.createElement('a'); a.href = url; a.download = 'stego_video.webm'; a.click(); URL.revokeObjectURL(url);
+        }
+        log(t('embed_success'));
+      } catch (err) {
+        log(`Error: ${err.message}`);
+      } finally {
+        startHideBtn.disabled = false;
+        hideProgress.classList.add('hidden');
+      }
+    });
+
+    const dropZoneExtract = $('#dropZoneExtract');
+    const extractVideoInput = $('#extractVideoInput');
+    const videoPreviewExtract = $('#videoPreviewExtract');
+    const extractPasswordInput = $('#extractPasswordInput');
+    const startExtractBtn = $('#startExtractBtn');
+    const extractProgress = $('#extractProgress');
+    const extractProgressFill = $('#extractProgressFill');
+    const extractProgressText = $('#extractProgressText');
+    let currentExtractVideo = null;
+
+    dropZoneExtract.addEventListener('click', () => extractVideoInput.click());
+    dropZoneExtract.addEventListener('dragover', e => { e.preventDefault(); dropZoneExtract.classList.add('drag-over'); });
+    dropZoneExtract.addEventListener('dragleave', () => dropZoneExtract.classList.remove('drag-over'));
+    dropZoneExtract.addEventListener('drop', e => {
+      e.preventDefault(); dropZoneExtract.classList.remove('drag-over');
+      const file = e.dataTransfer.files[0]; if (file) loadExtractVideo(file);
+    });
+    extractVideoInput.addEventListener('change', e => { if (e.target.files[0]) loadExtractVideo(e.target.files[0]); });
+
+    function loadExtractVideo(file) {
+      currentExtractVideo = file;
+      videoPreviewExtract.src = URL.createObjectURL(file);
+      videoPreviewExtract.style.display = 'block';
+      log(`Loaded video: ${file.name}`);
+    }
+
+    startExtractBtn.addEventListener('click', async () => {
+      if (!currentExtractVideo) { alert('Load stego video first'); return; }
+      const password = extractPasswordInput.value;
+      if (!password) { alert('Password required'); return; }
+      extractProgress.classList.remove('hidden');
+      startExtractBtn.disabled = true;
+      log('Extracting...');
+      try {
+        const result = await extractProcess(currentExtractVideo, password, (progress) => {
+          extractProgressFill.style.width = `${progress*100}%`;
+          extractProgressText.textContent = `${Math.round(progress*100)}%`;
+        });
+        if (!result.sha256Match) log('Warning: SHA256 mismatch!', 'warn');
+        log('Extraction successful. Downloading...');
+        const blob = new Blob([result.data], { type: 'application/octet-stream' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a'); a.href = url; a.download = result.fileName; a.click(); URL.revokeObjectURL(url);
+        log('File downloaded: ' + result.fileName);
+      } catch (err) {
+        if (err.message === 'Password incorrect') log(t('password_error'));
+        else log(`Error: ${err.message}`);
+      } finally {
+        startExtractBtn.disabled = false;
+        extractProgress.classList.add('hidden');
+      }
+    });
+
+    for (let i=0; i<20; i++) {
+      const p = document.createElement('div'); p.className = 'particle';
+      p.style.left = Math.random()*100+'%'; p.style.width = p.style.height = (2+Math.random()*4)+'px';
+      p.style.animationDuration = (10+Math.random()*20)+'s'; p.style.animationDelay = Math.random()*10+'s';
+      document.body.appendChild(p);
+    }
+    updateAllI18n();
+  })();
+</script>
+</body>
+</html>
