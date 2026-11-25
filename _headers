@@ -1,25 +1,8 @@
-# Cloudflare Pages 响应头（GitHub Pages 会忽略此文件）
-# wasm 体积 1.9 MB，手机每次冷启动都要拉一次 —— 这里设长缓存，避免反复下载
-
-/cimbar_js.2026-01-20T0312.wasm
-  Content-Type: application/wasm
-  Cache-Control: public, max-age=31536000, immutable
-
-/*.js
-  Cache-Control: public, max-age=600
-
-/*.mjs
-  Cache-Control: public, max-age=600
+/*
+  Cache-Control: no-cache, must-revalidate
 
 /*.html
-  Cache-Control: public, max-age=0, must-revalidate
+  Cache-Control: no-cache, must-revalidate
 
-/*.json
-  Cache-Control: public, max-age=300
-
-/*
-  X-Content-Type-Options: nosniff
-  Referrer-Policy: no-referrer
-# 以下两行留给以后需要 SharedArrayBuffer（wasm 多线程）时启用，现在开了没有收益
-#  Cross-Origin-Opener-Policy: same-origin
-#  Cross-Origin-Embedder-Policy: require-corp
+/*.js
+  Cache-Control: no-cache, must-revalidate

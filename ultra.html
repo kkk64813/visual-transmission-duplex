@@ -137,15 +137,15 @@
     </div>
 
     <div class="card">
-      <h3>诊断日志（把这段贴出来就能定位）</h3>
-      <div class="hint" style="margin-top:0">每次「锁上 / 包内复检不过 / CRC 失败 / 收到包」都记一行：档位、符号长度、同步命中、估出的缩放、边距、漂移、长度字段。出问题时点「下载 txt」发过来。</div>
+      <h3>诊断日志（全选复制贴出来就能定位）</h3>
+      <div class="hint" style="margin-top:0">每次「锁上 / 包内复检不过 / CRC 失败 / 收到包」都记一行：档位、符号长度、同步命中、估出的缩放、边距、漂移、长度字段。出问题时点「全选」，长按文字框复制，直接贴过来。</div>
       <div class="row" style="margin-top:8px">
-        <button class="pill" onclick="App.diagClear()">清空日志</button>
+        <button class="pill" onclick="App.diagSelect()">全选</button>
         <button class="pill" onclick="App.diagCopy()">复制</button>
-        <button class="pill" onclick="App.diagDownload()">下载 txt</button>
+        <button class="pill" onclick="App.diagClear()">清空</button>
         <span class="hint" id="diagCnt" style="margin:0">0 行</span>
       </div>
-      <div class="out hide" id="diagBox" style="font-size:11px;line-height:1.5;max-height:220px;overflow:auto;white-space:pre">（空）</div>
+      <textarea id="diagBox" class="out" readonly style="font-size:11px;line-height:1.5;height:200px;width:100%;overflow:auto;white-space:pre;resize:vertical;font-family:ui-monospace,Menlo,Consolas,monospace">（空）</textarea>
     </div>
 
     <div class="card">
@@ -242,11 +242,11 @@
 </main>
 
 <footer>
-  纯本地：声音只在空气里走，不经过网络。返回 <a href="./index.html">首页</a> ·
+  纯本地：声音只在空气里走，不经过网络。 版本 v2026-11-25c（三档频带）返回 <a href="./index.html">首页</a> ·
   双工控制通道见 <a href="./duplex.html">duplex</a>
 </footer>
 
-<script src="ultra-core.js"></script>
+<script src="ultra-core.js?v=20261125c"></script>
 <script>
 var App = (function () {
   var band = Ultra.BANDS[0];       // 默认 18.1k 实测 18k 听不见
@@ -347,8 +347,7 @@ var App = (function () {
     if (diagLines.length > DIAG_MAX) diagLines.shift();
     var box = $('diagBox'), cnt = $('diagCnt');
     if (box) {
-      box.className = 'out';
-      box.textContent = diagLines.join('\n');
+      box.value = diagLines.join('\n');
       box.scrollTop = box.scrollHeight;
     }
     if (cnt) cnt.textContent = diagLines.length + ' 行';
@@ -581,27 +580,32 @@ var App = (function () {
     diagClear: function () {
       diagLines = [];
       var box = $('diagBox');
-      if (box) { box.textContent = '（空）'; box.className = 'out hide'; }
+      if (box) box.value = '（空）';
       $('diagCnt').textContent = '0 行';
     },
 
-    diagCopy: function () {
-      var s = diagText();
-      if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(s).then(function () { log('诊断日志已复制 ' + diagLines.length + ' 行'); },
-          function () { log('复制被拒绝，改用「下载 txt」'); });
-      } else { log('这浏览器不支持剪贴板，请用「下载 txt」'); }
+    diagSelect: function () {
+      var box = $('diagBox');
+      if (!box) return;
+      if (box.value === '（空）') box.value = diagLines.join('\n');
+      box.focus();
+      box.select();
+      try { box.setSelectionRange(0, box.value.length); } catch (e) {}
+      log('已全选 ' + diagLines.length + ' 行，长按/右键复制即可');
     },
 
-    diagDownload: function () {
+    diagCopy: function () {
+      var self = App;
       var s = diagText();
-      var blob = new Blob([s], { type: 'text/plain;charset=utf-8' });
-      var a = document.createElement('a');
-      a.href = URL.createObjectURL(blob);
-      a.download = 'ultra-diag-' + new Date().toISOString().slice(0, 19).replace(/[:T]/g, '') + '.txt';
-      a.click();
-      setTimeout(function () { URL.revokeObjectURL(a.href); }, 2000);
-      log('诊断日志已下载 ' + diagLines.length + ' 行');
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(s).then(
+          function () { log('诊断日志已复制 ' + diagLines.length + ' 行'); },
+          function () { self.diagSelect(); }
+        );
+      } else {
+        self.diagSelect();
+        log('这浏览器不给自动复制，已全选，长按/右键复制');
+      }
     },
 
     calib: function (permille) {
@@ -750,6 +754,10 @@ var App = (function () {
 App.speed(16);
 App.repeat(2);
 (function init() {
+  // 版本自检：内核还是旧的（被缓存）时会缺档，直接说出来，省得以为功能没做
+  if (Ultra.BANDS.length < 3) {
+    log('内核还是旧版（只有 ' + Ultra.BANDS.length + ' 档）：强制刷新页面（长按刷新 / 清缓存）', '#c0392b');
+  }
   var row = document.getElementById('bandRow');
   Ultra.BANDS.forEach(function (b) {
     var btn = document.createElement('button');

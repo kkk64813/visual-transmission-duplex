@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>硬件边界 · 扫频探测</title>
+<style>
+  :root{
+    --bg:#f5f7f6; --surface:#fff; --ink:#16211e; --muted:#6d7a75;
+    --line:#e2e8e5; --accent:#0e7c66; --accent-soft:#e8f5f0; --accent-deep:#0a5f4f;
+    --shadow:0 1px 2px rgba(20,40,35,.04),0 8px 24px rgba(20,40,35,.06);
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:var(--bg); color:var(--ink);
+    font:16px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+    -webkit-font-smoothing:antialiased; -webkit-text-size-adjust:100%;
+  }
+  .wrap{max-width:880px;margin:0 auto;padding:44px 24px 72px}
+
+  header{display:flex;align-items:center;gap:12px;margin-bottom:40px;flex-wrap:wrap}
+  .mark{width:32px;height:32px;flex:0 0 32px;display:grid;grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr;gap:3px}
+  .mark i{display:block;border-radius:4px;background:var(--accent)}
+  .mark i:nth-child(2){background:var(--accent-deep);opacity:.9}
+  .mark i:nth-child(3){background:var(--accent-deep);opacity:.55}
+  .mark i:nth-child(4){background:#9ed4c4}
+  header .name{font-weight:650;letter-spacing:.02em}
+  .pill{margin-left:auto;font-size:12.5px;color:var(--accent-deep);background:var(--accent-soft);
+    border:1px solid #cfe9df;border-radius:999px;padding:3px 11px;white-space:nowrap}
+
+  h1{font-size:36px;line-height:1.24;letter-spacing:-.01em;margin:0 0 14px;font-weight:680}
+  h1 span{color:var(--accent)}
+  .lede{font-size:16.5px;color:var(--muted);max-width:660px;margin:0 0 30px}
+
+  .tip{background:#fffaf1;border:1px solid #f1e3ca;border-radius:12px;padding:14px 16px;
+    font-size:14px;color:#7c5c26;line-height:1.7;margin-bottom:28px}
+  .tip b{color:#5f4416}
+
+  section{background:var(--surface);border:1px solid var(--line);border-radius:14px;
+    padding:20px 22px 22px;margin-bottom:18px;box-shadow:var(--shadow)}
+  section.flat{background:transparent;border:0;box-shadow:none;padding:0}
+  h3{font-size:12.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);
+    font-weight:600;margin:0 0 14px}
+
+  table.kv{width:100%;border-collapse:collapse;font-size:14px}
+  table.kv th,table.kv td{text-align:left;padding:8px 0;border-bottom:1px solid var(--line);vertical-align:top}
+  table.kv th{width:40%;color:var(--muted);font-weight:500;padding-right:14px}
+  table.kv td{font-variant-numeric:tabular-nums;word-break:break-word}
+  table.kv tr:last-child th,table.kv tr:last-child td{border-bottom:0}
+
+  .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+  .btn{background:var(--accent);color:#fff;border:0;border-radius:10px;padding:10px 18px;
+    font:600 15px/1 inherit;cursor:pointer;transition:background .15s}
+  .btn:hover{background:var(--accent-deep)}
+  .btn:disabled{opacity:.45;cursor:not-allowed}
+  .btn.ghost{background:var(--surface);color:var(--accent-deep);border:1px solid var(--line)}
+  .btn.ghost:hover{background:var(--accent-soft)}
+  .btn.danger{background:#b4423a}
+  .btn.danger:hover{background:#96352e}
+
+  .tabs{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px}
+  .tabs button{background:var(--surface);border:1px solid var(--line);color:var(--muted);
+    border-radius:10px;padding:9px 14px;font:500 14px/1 inherit;cursor:pointer}
+  .tabs button.on{background:var(--accent-soft);border-color:#cfe9df;color:var(--accent-deep);font-weight:650}
+
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  .field{display:flex;flex-direction:column;gap:6px;font-size:13px;color:var(--muted)}
+  .field input[type=number],.field select{background:var(--surface);border:1px solid var(--line);
+    border-radius:9px;padding:9px 11px;font:15px inherit;color:var(--ink);width:100%}
+  .field input[type=range]{width:100%;accent-color:var(--accent)}
+
+  canvas{display:block;width:100%;background:#fbfdfc;border:1px solid var(--line);border-radius:10px}
+  .meta{font-size:13px;color:var(--muted);margin-top:9px;font-variant-numeric:tabular-nums}
+
+  .verdict{margin-top:16px;padding:14px 16px;border-radius:12px;background:var(--accent-soft);
+    border:1px solid #cfe9df;font-size:14.5px;line-height:1.7;color:#0b5a4a}
+  .verdict.warn{background:#fff5f4;border-color:#f3d6d2;color:#8a3a33}
+  .verdict b{color:inherit}
+
+  ol.steps{margin:0;padding:0;list-style:none;counter-reset:s}
+  ol.steps li{counter-increment:s;display:flex;gap:14px;padding:13px 0;border-bottom:1px solid var(--line);align-items:flex-start}
+  ol.steps li:last-child{border-bottom:0}
+  ol.steps li::before{content:counter(s);flex:0 0 24px;height:24px;border-radius:50%;background:var(--accent-soft);
+    color:var(--accent-deep);font-size:13px;font-weight:700;display:grid;place-items:center;margin-top:3px}
+  .steps-txt b{font-weight:640;display:block}
+  .steps-txt span{color:var(--muted);font-size:14px}
+
+  .prog{height:6px;background:#eef3f0;border-radius:999px;overflow:hidden;margin-top:12px}
+  .prog > i{display:block;height:100%;width:0;background:var(--accent);transition:width .18s linear}
+
+  @media (max-width:680px){
+    .wrap{padding:28px 16px 56px}
+    h1{font-size:27px}
+    .grid2{grid-template-columns:1fr}
+    header .pill{margin-left:0;order:3;flex-basis:100%}
+    table.kv th{width:44%}
+    section{padding:16px 16px 18px}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <div class="mark" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+    <div class="name">硬件边界 · 扫频</div>
+    <div class="pill">纯本地 · 不连服务器</div>
+  </header>
+
+  <h1>这台设备，<span>能到多高</span></h1>
+  <p class="lede">
+    从 400 Hz 一路逐点到采样率天花板，同时用本机麦克风回采，把「喇叭发得出去多少、麦克风收得回来多少」
+    画成一条曲线。先量边界，再谈 18 kHz 超声信道，也才知道能不能碰到 20 kHz 以上的 MEMS 谐振区。
+  </p>
+
+  <div class="tip">
+    <b>两条命门。</b>
+    一是网页只能输出到「采样率 ÷ 2」，48 kHz 的设备天花板就是 24 kHz，再高只能靠外置换能器；
+    二是手机/笔记本的喇叭在 15 kHz 之后掉得很快，掉多少必须实测，不能靠规格表猜。
+    测的时候把系统音量拉到最大（网页控不了系统音量），人耳 18 kHz 以上多半听不到，但大功率别长时间贴着耳朵放。
+  </div>
+
+  <section>
+    <h3>① 环境自检（无需授权）</h3>
+    <table class="kv" id="envTable">
+      <tr><th>状态</th><td>正在检测…</td></tr>
+    </table>
+    <div class="row" style="margin-top:16px">
+      <button class="btn" id="btnInit">启用音频</button>
+      <button class="btn ghost" id="btnRecheck">重新自检</button>
+    </div>
+    <div class="meta" id="initMeta">音频上下文未启动</div>
+  </section>
+
+  <section>
+    <h3>② 测量模式</h3>
+    <div class="tabs" id="tabs">
+      <button data-mode="loop" class="on">闭环自测（播 + 收回采）</button>
+      <button data-mode="tx">只发射</button>
+      <button data-mode="rx">只接收</button>
+    </div>
+
+    <div id="panelLoop">
+      <div class="grid2">
+        <label class="field">起始频率 (Hz)
+          <input type="number" id="inF0" value="400" min="50" step="50">
+        </label>
+        <label class="field">测点数
+          <input type="number" id="inN" value="36" min="12" max="96" step="1">
+        </label>
+      </div>
+      <div class="row" style="margin-top:16px">
+        <button class="btn" id="btnRun">开始闭环扫描</button>
+        <button class="btn ghost" id="btnStop" disabled>停止</button>
+      </div>
+      <div class="prog"><i id="progBar"></i></div>
+      <div class="meta" id="progText">未开始</div>
+    </div>
+
+    <div id="panelTx" hidden>
+      <div class="grid2">
+        <label class="field">定频频率 (Hz) · <span id="txFreqLabel">18000</span>
+          <input type="range" id="inFreq" min="200" max="22000" step="10" value="18000">
+        </label>
+        <label class="field">输出电平
+          <input type="range" id="inAmp" min="0.05" max="1" step="0.05" value="0.8">
+        </label>
+      </div>
+      <div class="row" style="margin-top:16px">
+        <button class="btn" id="btnTone">播放定频</button>
+        <button class="btn ghost" id="btnToneOff">停</button>
+        <button class="btn ghost" id="btnChirp">连续扫频 8 秒</button>
+      </div>
+      <div class="meta">连续扫频：从 2 kHz 到天花板，对数扫完 8 秒。适合拿另一台设备当接收端做交叉验证。</div>
+    </div>
+
+    <div id="panelRx" hidden>
+      <div class="row">
+        <button class="btn" id="btnRxStart">开始监听</button>
+        <button class="btn ghost" id="btnRxStop">停</button>
+        <button class="btn ghost" id="btnPeak">抓 5 秒峰值</button>
+      </div>
+      <div class="meta" id="rxMeta">监听未开始。峰值会忽略 8 kHz 以下的环境噪声。</div>
+    </div>
+  </section>
+
+  <section>
+    <h3>③ 实时频谱（0 – 天花板）</h3>
+    <canvas id="cvSpec" height="220"></canvas>
+    <div class="meta" id="specMeta">—</div>
+  </section>
+
+  <section>
+    <h3>④ 频响曲线与判定</h3>
+    <canvas id="cvResp" height="240"></canvas>
+    <div class="verdict" id="verdict">还没测。先点「启用音频」，再点「开始闭环扫描」。</div>
+    <table class="kv" id="tblResult" style="margin-top:14px"></table>
+    <div class="row" style="margin-top:16px">
+      <button class="btn ghost" id="btnExport">导出 JSON</button>
+      <button class="btn ghost" id="btnCopy">复制结论</button>
+    </div>
+  </section>
+
+  <section class="flat">
+    <h3>怎么把两台设备各量一遍</h3>
+    <ol class="steps">
+      <li><div class="steps-txt"><b>电脑先跑闭环</b><span>同一个网址在电脑上开一次，闭环扫描得到「电脑喇叭 + 电脑麦克风」的组合曲线。</span></div></li>
+      <li><div class="steps-txt"><b>手机再跑闭环</b><span>手机上再跑一次，得到手机的曲线。两条曲线放在一起，谁的 18 kHz 以上掉得更狠一目了然。</span></div></li>
+      <li><div class="steps-txt"><b>分离测只发不收</b><span>要区分「喇叭不行」还是「麦克风不行」：电脑切到「只发射」定频 19 kHz，手机切到「只接收」看 dBFS 与峰值频率；再反过来做一遍。</span></div></li>
+      <li><div class="steps-txt"><b>电脑别用内置喇叭</b><span>笔记本内置喇叭 15 kHz 后基本躺平，插一副耳机或小音箱再测一次，频响会明显往右延伸。</span></div></li>
+    </ol>
+  </section>
+
+</div>
+<script src="sweep.js"></script>
+</body>
+</html>
