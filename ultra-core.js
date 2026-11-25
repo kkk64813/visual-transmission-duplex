@@ -401,18 +401,42 @@ var GAIN = 0.72;          // 默认标准音量：够响，又不至于让喇叭
     return { scale: bestS, on: cb.on, off: cb.off, ratio: cb.ratio, spacing: spacing, peaks: merged.length };
   }
 
-  /* 发送前的「标尺音」：把 8 个同步音按 SYNC 顺序播几遍。
-   * 收端只要听到这段，就能用 measureScale 一次量出本链路的频率缩放。
-   * 每轮 8 音 × 24ms = 192ms，5 轮约 0.96 秒。 */
-  function makeRuler(sr, band, symMs, rounds) {
+  /* 绝对频率测量：在一段音频里找最强的单一频率（粗扫 + 局部细扫 + 抛物线插值）。
+   * 只用来测「定位音」，所以范围可以很窄，代价很小。 */
+  function measureTone(x, sr, fLo, fHi, step) {
+    step = step || 10;
+    var n = Math.min(x.length, Math.round(sr * 0.3));
+    if (n < Math.round(sr * 0.05)) return null;
+    var off = x.length - n;
+    var best = { f: fLo, v: -1 };
+    for (var f = fLo; f <= fHi; f += step) {
+      var m = goertzel(x, off, n, f, sr);
+      if (m > best.v) best = { f: f, v: m };
+    }
+    var lo2 = Math.max(fLo, best.f - step), hi2 = Math.min(fHi, best.f + step);
+    for (var g = lo2; g <= hi2 + 1e-9; g += Math.max(1, step / 5)) {
+      var m2 = goertzel(x, off, n, g, sr);
+      if (m2 > best.v) best = { f: g, v: m2 };
+    }
+    return best;
+  }
+
+  /* 发送前的「标尺音」：一段 300ms 的纯定位音（tone0，绝对频率唯一）+ 几轮同步音。
+   * 纯定位音让收端可以「直接量频率」而不是「猜缩放」——这是最稳的一步；
+   * 后面的同步音轮次用来验节奏（长度对不上时同步头命中数会掉）。 */
+  function makeRuler(sr, band, symMs, rounds, locMs) {
     sr = sr || SR; band = band || BANDS[0];
-    symMs = symMs || 24; rounds = Math.max(2, rounds || 5);
+    symMs = symMs || 24; rounds = Math.max(2, rounds || 4);
     var symLen = Math.round(sr * symMs / 1000);
-    var total = SYNC.length * rounds * symLen;
+    var locLen = Math.round(sr * (locMs || 300) / 1000);
+    var total = locLen + SYNC.length * rounds * symLen;
     var x = new Float32Array(total);
     var step = TWO_PI / sr, phase = 0, p = 0;
+    /* 定位音：tone0 纯音 */
+    var wLoc = step * toneFreq(band, 0);
+    for (var q = 0; q < locLen; q++) { x[p++] = Math.sin(phase) * GAIN; phase += wLoc; if (phase > TWO_PI) phase -= TWO_PI; }
     var glide = Math.max(1, Math.round(sr * GLIDE_MS / 1000));
-    var prevW = step * toneFreq(band, SYNC[0]);
+    var prevW = wLoc;
     for (var r = 0; r < rounds; r++) {
       for (var i = 0; i < SYNC.length; i++) {
         var tw = step * toneFreq(band, SYNC[i]);
@@ -501,7 +525,8 @@ var GAIN = 0.72;          // 默认标准音量：够响，又不至于让喇叭
       //  2) 候选再在种子 ±0.8% 内细扫缩放（偏移不可能比这更大，扫 ±3% 等于给错解开门），
       //     必须扫到 ≥7/8 才认。
       var hits = this._hitCount(off, symLen, this.fScale);
-      if (hits < SYNC.length - 3) continue;
+      if (hits > (this.scanBest || 0)) this.scanBest = hits;
+      if (hits < SYNC.length - 4) continue;
       var fs = this.fScale;
       if (hits < SYNC.length - 1) {
         var bestHits = hits, seed = this.fScale;
@@ -511,6 +536,7 @@ var GAIN = 0.72;          // 默认标准音量：够响，又不至于让喇叭
           if (h >= SYNC.length - 1) break;
         }
         if (bestHits < SYNC.length - 1) continue;
+        if (bestHits > (this.scanBest || 0)) this.scanBest = bestHits;
       }
 
       // 同步头对上了，但粗搜的步长是 1/4 符号，窗口可能跨在两个符号之间 ——
@@ -623,6 +649,43 @@ var GAIN = 0.72;          // 默认标准音量：够响，又不至于让喇叭
     return best;
   };
 
+  /* 定位校准（首选）：直接从音频里量「绝对频率」，不猜缩放。
+   *  1) 在 band.f0 的 ±6% 内找最强单频（定位音 tone0，或数据里最强的某个音）；
+   *  2) 最强音可能是 8 个音里的任意一个，所以把「峰频率 / 每个可能音」都当候选缩放；
+   *  3) 每个候选都拿「同步头命中数」验 —— 只有真能对上同步头（≥6/8）的那个才算。
+   * 这一步不依赖当前 fScale，所以上一轮被写歪了也能自己拉回来。 */
+  StreamDecoder.prototype.locateScale = function (winMs) {
+    var need = Math.round(this.sr * (winMs || 420) / 1000);
+    if (this.fill < need + 32) return null;
+    var ws = this.fill - need;
+    var win = this.buf.subarray(ws, this.fill);
+    var pk = measureTone(win, this.sr, this.band.f0 * 0.94, this.band.f0 * 1.06, 10);
+    if (!pk || !(pk.v > 0)) return null;
+    var cands = [];
+    for (var t = 0; t < TONES; t++) cands.push(pk.f / (this.band.f0 + t * this.band.df));
+    var best = { scale: this.fScale, hits: 0 };
+    for (var i = 0; i < cands.length; i++) {
+      var s = cands[i];
+      if (s < 0.94 || s > 1.06) continue;
+      var h = this._syncHitsInWindow(ws, need, s);
+      if (h >= best.hits) best = { scale: s, hits: h };
+      if (h >= SYNC.length) break;
+    }
+    var ok = best.hits >= 6;
+    if (ok) {
+      var changed = Math.abs(best.scale - this.fScale) > 1.5e-4;
+      this.fScale = best.scale;
+      if (!FORCED_SCALE) SHARED_SCALE = best.scale;
+      if (changed) { this.syncAbs = -1; }
+    }
+    this.lastCal = {
+      mode: 'locate', scale: ok ? best.scale : this.fScale, ok: ok, hits: best.hits,
+      measured: pk.f / this.band.f0, toneF: pk.f, ratio: 0,
+      at: (typeof performance !== 'undefined' ? performance.now() : Date.now())
+    };
+    return this.lastCal;
+  };
+
   /* 自动校准：不需要用户点按钮，也不需要盲扫等 20 秒。
    * 两步走：
    *  1) measureScale 从频谱粗测一个 scale（一次遍历，几十毫秒）；
@@ -634,9 +697,13 @@ var GAIN = 0.72;          // 默认标准音量：够响，又不至于让喇叭
     if (this.fill < need + 32) return null;
     var ws = this.fill - need;
     var now = (typeof performance !== 'undefined' ? performance.now() : Date.now());
-    var r = measureScale(this.buf.subarray(ws, this.fill), this.sr, this.band, 0.97, 1.03, 0.001);
+    /* 第一优先：绝对频率定位（不依赖当前 fScale，被写歪也能救回来）。 */
+    var loc = this.locateScale(msLen);
+    if (loc && loc.ok) return loc;
+    var r = measureScale(this.buf.subarray(ws, this.fill), this.sr, this.band, 0.94, 1.06, 0.001);
     var seed = r ? r.scale : this.fScale;
     var best = { hits: 0, scale: seed };
+    var hitsNow = this._syncHitsInWindow(ws, need, this.fScale);
     for (var k = -15; k <= 15; k++) {
       var s = seed + k * 0.002;
       if (s < 0.94 || s > 1.06) continue;
@@ -646,14 +713,16 @@ var GAIN = 0.72;          // 默认标准音量：够响，又不至于让喇叭
       }
       if (h >= SYNC.length) break;
     }
-    var ok = best.hits >= 6 && (!r || r.ratio >= 2);
+    /* 门槛：必须能对到 7/8 以上，而且必须明显好于当前值。
+     * 以前是 6/8，实测在标尺上会把 0.9958 这种错值也「验证通过」，一旦写进去就再也锁不上。 */
+    var ok = best.hits >= SYNC.length - 1 && best.hits > hitsNow;
     if (ok) {
       var changed = Math.abs(best.scale - this.fScale) > 2e-4;
       this.fScale = best.scale;
       if (!FORCED_SCALE) SHARED_SCALE = best.scale;
       if (changed) this.syncAbs = -1;              // 缩放大改后，原来锁的位置作废，重扫
     }
-    this.lastCal = { scale: this.fScale, ok: ok, hits: best.hits, measured: seed, ratio: r ? r.ratio : 0, at: now };
+    this.lastCal = { mode: 'comb', scale: this.fScale, ok: ok, hits: best.hits, measured: seed, ratio: r ? r.ratio : 0, at: now };
     return this.lastCal;
   };
 

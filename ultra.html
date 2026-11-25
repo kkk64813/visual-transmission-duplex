@@ -302,11 +302,11 @@
 
 
 <footer>
-  纯本地：声音只在空气里走，不经过网络。 版本 v2026-11-25u（每次发送前自动标尺校准 · 一次频谱测量 · 单档 18.1k/24ms）返回 <a href="./index.html">首页</a> ·
+  纯本地：声音只在空气里走，不经过网络。 版本 v2026-11-25v（定位音测绝对频率 · 校不过不写 · 屏上显示同步命中）返回 <a href="./index.html">首页</a> ·
   双工控制通道见 <a href="./duplex.html">duplex</a>
 </footer>
 
-<script src="ultra-core.js?v=20261125u"></script>
+<script src="ultra-core.js?v=20261125v"></script>
 <script>
 var App = (function () {
   /* ===== 单档单速（2026-11-25 起）=====
@@ -327,6 +327,7 @@ var App = (function () {
   var ackReplyOn = true;           // 接收端：缺包时自动回执
   var waitAckOn = true;            // 发送端：等回执再补包
   var lastPktAt = 0, lastAckAt = 0, ackRound = 0, lastCalAt = 0;
+  var rxBestHits = 0, rxBestAt = 0;
   function now() { return performance.now ? performance.now() : Date.now(); }
   var ackDec = null, ackProc = null, ackSrc = null, ackMic = null, ackBusy = false, ackDead = false;
   var loopTimer = null, loopN = 0, loopOn = false; // 循环发校准包
@@ -865,7 +866,14 @@ var App = (function () {
       el.style.color = pk.f >= 17500 ? 'var(--accent-2)' : (pk.f ? '#c0392b' : 'var(--muted)');
     }
     var lv = $('rxNow');
-    if (lv) lv.textContent = pk.f ? ('听到 ' + (pk.f >= 17500 ? '超声' : '低频杂音')) : '很安静';
+    /* 手机屏幕上必须能直接看出「同步头到底命中了几个」——这是「听到了却解不出」唯一的判据。
+     * 0/8：解码器根本没形成候选（多半是缩放/节奏对不上）；6~7/8：锁门开得太严。 */
+    if (decoders.length && decoders[0].scanBest) {
+      if (decoders[0].scanBest > rxBestHits) rxBestHits = decoders[0].scanBest;
+      decoders[0].scanBest = 0;
+    }
+    if (now() - rxBestAt > 1000) { rxBestHits = 0; rxBestAt = now(); }
+    if (lv) lv.textContent = (pk.f ? ('听到 ' + (pk.f >= 17500 ? '超声' : '低频杂音')) : '很安静') + ' · 同步命中 ' + rxBestHits + '/8';
     /* 收样率：回调里只累加样本数，这里算比值 —— 这才是「麦克风到底喂进来多少」的真数。 */
     if (rxT0) {
       var el2 = (performance.now() - rxT0) / 1000;
@@ -1159,8 +1167,8 @@ var App = (function () {
         /* 每次发送的第一包前面自动播 5 轮标尺音（约 0.96 秒）：
          * 收端听到这段就把本链路的频率缩放量出来，不需要任何人去点「校正」。 */
         if (round === 1 && j === 1) {
-          log('发送前自动播标尺音 0.96s（对端听到即自动校准）');
-          tx.sendCal(pkt, b, symMs, 5, function () { setTimeout(one, 150); });
+          log('发送前自动播标尺音 1.07s（300ms 定位音 + 4 轮同步，对端自动校准）');
+          tx.sendCal(pkt, b, symMs, 4, function () { setTimeout(one, 150); });
         } else {
           tx.send(pkt, b, symMs, function () { setTimeout(one, 150); });
         }
