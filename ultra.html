@@ -92,7 +92,7 @@
 
 <header>
   <div class="mark"></div>
-  <div class="brand">超声信道<small>UltraLink · 18.1k / 20.5k / 22.3k</small></div>
+  <div class="brand">超声信道<small>UltraLink · 固定 18.1k · 24ms</small></div>
   <div class="grow"></div>
   <div class="dot" id="dot"></div>
   <span style="font-size:12px;color:var(--muted)" id="stateTxt">未启动</span>
@@ -125,7 +125,7 @@
         <span>CRC 失败 <b id="stCrc">0</b></span>
         <span>采样 <b id="stSr">—</b></span>
       </div>
-      <div class="hint">哪一档能量条跳起来，就说明这条频带在这对设备上能过。电脑麦克风上限约 21.2k，22.3k 那条在电脑上基本是死的。</div>
+      <div class="hint">只有一个档：18.1k（18100–19500 Hz）。看这根条跳起来就说明这条链路活着。</div>
     </div>
 
     <div class="card">
@@ -228,20 +228,10 @@
     </div>
 
     <details class="card">
-      <summary>发送设置（速度 / 每包字节 / 回执）</summary>
+      <summary>发送设置（每包字节 / 回执）</summary>
       <div class="body">
-        <div class="row">
-          <span class="hint" style="margin:0;flex:none">对方用</span>
-          <button class="pill on" data-peer="phone" onclick="App.peer('phone')">手机收</button>
-          <button class="pill" data-peer="pc" onclick="App.peer('pc')">电脑收（≤21.2k）</button>
-        </div>
-        <div class="hint" id="peerNote">电脑麦克风最高约 21.2k，选「电脑收」后 22.3k 档自动不用，只轮 18.1k / 20.5k。</div>
-        <div class="row" style="margin-top:12px">
-          <button class="pill" data-sp="16" onclick="App.speed(16)">快 · 16ms</button>
-          <button class="pill on" data-sp="24" onclick="App.speed(24)">稳 · 24ms</button>
-          <button class="pill" data-sp="32" onclick="App.speed(32)">很稳 · 32ms</button>
-        </div>
-        <div class="row" style="margin-top:8px">
+        <div class="hint">频段与速度已固定：18.1k · 24ms（分档和变速都下线了，减少变量才能定位问题）。</div>
+        <div class="row" style="margin-top:10px">
           <button class="pill" data-rp="2" onclick="App.repeat(2)">每包发 2 遍</button>
           <button class="pill" data-rp="3" onclick="App.repeat(3)">3 遍</button>
           <button class="pill on" data-rp="1" onclick="App.repeat(1)">1 遍</button>
@@ -255,7 +245,6 @@
           <button class="pill" data-cb="48" onclick="App.chunk(48)">48</button>
         </div>
         <div class="hint" id="chunkNote" style="margin-top:6px">默认 16 字节 ≈ 24ms 下 1.7 秒一包（实测真机 2.6 秒以上的单包几乎必挂）。</div>
-        <div class="hint" id="speedNote"></div>
         <div class="row" style="margin-top:12px">
           <span class="hint" style="margin:0;flex:none">可靠发送</span>
           <button class="pill on" data-wa="1" onclick="App.waitAck(true)">等回执补包</button>
@@ -286,7 +275,7 @@
         </div>
         <div class="row" style="margin-top:12px">
           <button onclick="App.quietPreset()">一键「静音优先」</button>
-          <button onclick="App.quietTop()">一键「极静 22.3k」</button>
+          
         </div>
         <div class="hint">人耳听到的那点声音，多是喇叭把超声“检波”出来的：幅度降一半，失真降到四分之一。想安静先降音量，再降速度，别先换频段。</div>
       </div>
@@ -313,37 +302,34 @@
 
 
 <footer>
-  纯本地：声音只在空气里走，不经过网络。 版本 v2026-11-25r（解码搬出音频回调防卡死 · 门控修正 · 回执 32ms/8s · 回执 dBFS）返回 <a href="./index.html">首页</a> ·
+  纯本地：声音只在空气里走，不经过网络。 版本 v2026-11-25t（单档 18.1k + 单速 24ms · 1 个解码器 · 零回执 · 解码泵）返回 <a href="./index.html">首页</a> ·
   双工控制通道见 <a href="./duplex.html">duplex</a>
 </footer>
 
-<script src="ultra-core.js?v=20261125r"></script>
+<script src="ultra-core.js?v=20261125t"></script>
 <script>
 var App = (function () {
-  var band = Ultra.BANDS[0];       // 默认 18.1k 实测 18k 听不见
-  var autoBand = false;            // 自动档：每发一遍换一档，三档轮流铺
+  /* ===== 单档单速（2026-11-25 起）=====
+   * 只用 18.1k（18100–19500，8 音 ×200Hz）+ 24ms 一种速度，不再分档、不再轮流。
+   * 理由是真机数据：18.1k 在手机扬声器/电脑麦克风都是 100%，20.5k 只剩 30%，22.3k 电脑收不到。
+   * 加宽到 18–21k 不会提高容错（容错来自音间距和时间长度），只会让一半数据落在最弱的频段上。
+   * 顺带把 9 个解码器砍成 1 个，手机 CPU 掉样/卡死的问题从根上消失。 */
+  var ONE_BAND = 'mid', ONE_SP = 24;
+  var band = Ultra.bandByKey ? Ultra.bandByKey(ONE_BAND) : Ultra.BANDS[0];
+  var autoBand = false;
   var chunkBytes = 16;             // 每包载荷字节：实测真机单包 >2.5 秒几乎必挂，16B@24ms ≈1.7 秒最稳
-  /* 回执用固定的一组参数：18.1k + 24ms + 连发 2 遍。
-   * 为什么不用「跟数据同一档」：电脑麦克风实测最高只到约 21.2k，22.3k 那一档在电脑端根本进不来；
-   * 18.1k 是两端都验过能收的那一档，回执这种「一句话定生死」的东西必须走最稳的链路。 */
-  var ACK_BAND = 'mid', ACK_SP = 32, ACK_COPIES = 2, ACK_EVERY_MS = 3200;
-  /* 对端设备：电脑麦克风上限约 21.2k，22.3k 那档在电脑上等于聋。开着「电脑收」时，发端
-   * 自动把 22.3k 从可用档里摘掉（自动轮流只轮 18.1k/20.5k），否则那一轮永远补不回来。 */
+  /* 回执同样走 18.1k + 24ms（和数据同一档，参数只留一套，少一个变量就少一处错）。 */
+  var ACK_BAND = ONE_BAND, ACK_SP = ONE_SP, ACK_COPIES = 2, ACK_EVERY_MS = 2400;
+  /* 只有一个档，所以发送端永远用它；peerIsPC / 自动轮流这些分档逻辑全部退役（保留变量避免旧调用报错）。 */
   var peerIsPC = false, ackDoneSent = 0;
-  function allowedBands() {
-    return peerIsPC ? Ultra.BANDS.filter(function (b) { return b.key !== 'top'; }) : Ultra.BANDS;
-  }
-  function txBandAt(i) {
-    if (!autoBand) return (peerIsPC && band.key === 'top') ? Ultra.bandByKey('hi') : band;
-    var l = allowedBands();
-    return l[((i % l.length) + l.length) % l.length];
-  }
+  function allowedBands() { return [band]; }
+  function txBandAt() { return band; }
   var ackReplyOn = true;           // 接收端：缺包时自动回执
   var waitAckOn = true;            // 发送端：等回执再补包
   var lastPktAt = 0, lastAckAt = 0, ackRound = 0;
   var ackDec = null, ackProc = null, ackSrc = null, ackMic = null, ackBusy = false, ackDead = false;
   var loopTimer = null, loopN = 0, loopOn = false; // 循环发校准包
-  var symMs = 16, repeats = 2;
+  var symMs = ONE_SP, repeats = 2;
   var ctx = null, tx = null;
   var micStream = null, proc = null;
   var decoders = [];               // 3 band × 2 speed
@@ -380,35 +366,24 @@ var App = (function () {
   /* ---------- 界面初始化 ---------- */
   function buildBandRow() {
     var row = $('bandRow');
-    row.innerHTML = '';
-    var ab = document.createElement('button');
-    ab.className = 'pill' + (autoBand ? ' on' : '');
-    ab.textContent = '自动';
-    ab.onclick = function () { App.pickBand('auto'); };
-    row.appendChild(ab);
-    Ultra.BANDS.forEach(function (b) {
-      var btn = document.createElement('button');
-      var off = peerIsPC && b.key === 'top';
-      btn.className = 'pill' + (!autoBand && b.key === band.key && !off ? ' on' : '');
-      btn.textContent = b.name + (off ? '（电脑收不到）' : '');
-      btn.disabled = off;
-      btn.style.opacity = off ? '0.45' : '';
-      btn.onclick = function () { App.pickBand(b.key); };
-      row.appendChild(btn);
-    });
-    $('bandNote').textContent = autoBand
-      ? (peerIsPC ? '自动：18.1k → 20.5k 轮流铺（电脑收，22.3k 已停用）' : '自动：18.1k → 20.5k → 22.3k 轮流铺')
-      : band.desc;
+    if (row) {
+      row.innerHTML = '<span class="tag">固定 · 18.1k（18100–19500 Hz）· 24ms</span>';
+    }
+    var bn = $('bandNote');
+    if (bn) bn.textContent = '只用这一档、这一速：18.1k 在手机扬声器和电脑麦克风上都是满能量，20.5k 只有三成、22.3k 电脑收不到，所以分档全部下线。';
     buildMeters();
   }
 
   function buildMeters() {
     var m = $('meters');
+    if (!m) return;
     m.innerHTML = '';
+    /* 只剩一档，就只画一根条：18.1k 能量。 */
     Ultra.BANDS.forEach(function (b) {
+      if (b.key !== ONE_BAND) return;
       var d = document.createElement('div');
       d.className = 'meter';
-      d.innerHTML = '<span class="nm">' + b.name + '</span><span class="bar"><i id="bar-' + b.key + '"></i></span><span class="vl" id="val-' + b.key + '">-</span>';
+      d.innerHTML = '<span class="nm">18.1k</span><span class="bar"><i id="bar-' + b.key + '"></i></span><span class="vl" id="val-' + b.key + '">-</span>';
       m.appendChild(d);
     });
   }
@@ -419,52 +394,42 @@ var App = (function () {
    * （真机现象：同步失败 0 次、命中 0/8、什么都没解出）。
    * 这一版：开麦后先留 400ms 量环境底噪（正常都是先开麦再发包），之后用「快降慢升」的
    * 地板跟踪；另外每隔 8 块无条件放行一块做盲探，就算门控判断错了也不会永久失明。 */
-  var gateFloorDb = {}, gateN = 0, gateWarm = 0, gateHold = {}, gateLogAt = 0;
+  var gateFloorDb = {}, gateOn = { mid: true, hi: true, top: true }, gateN = 0, gateWarm = 0, gateHold = {}, gateLogAt = 0;
+  var gateLatestE = { mid: 0, hi: 0, top: 0, floor: { mid: 0, hi: 0, top: 0 } };
   function gateProbe(chunk) {
     var sr = ctx ? ctx.sampleRate : 48000;
     var n = Math.min(chunk.length, Math.round(sr * 0.06));
     if (n < 512) return;
     var sl = chunk.subarray(chunk.length - n);
     gateN++;
-    var es = {}, maxE = 0, maxKey = null;
-    Ultra.BANDS.forEach(function (b) {
-      var e = Ultra.bandEnergy(sl, sr, b).peak;
-      es[b.key] = e;
-      if (e > maxE) { maxE = e; maxKey = b.key; }
-    });
+    /* 只有一档，只测这一档的能量，省掉 2/3 的 Goertzel 开销。 */
+    var eMid = Ultra.bandEnergy(sl, sr, band).peak;
+    var es = { mid: eMid, hi: 0, top: 0 };
+    var maxE = eMid, maxKey = band.key;
     /* 前 400ms 一边量环境底噪、一边照常放行（宁可多跑几块 CPU，也不能把开头的包丢掉）。 */
     if (gateWarm < 5) {
       gateWarm++;
-      Ultra.BANDS.forEach(function (b) {
-        var f = gateFloorDb[b.key];
-        gateFloorDb[b.key] = f == null ? es[b.key] : Math.min(f, es[b.key]);
-        gateOn[b.key] = true;
-      });
+      var f0 = gateFloorDb.mid;
+      gateFloorDb.mid = f0 == null ? eMid : Math.min(f0, eMid);
+      gateOn.mid = true;
       if ($('dGate')) $('dGate').textContent = '量底噪… ' + gateWarm + '/5';
       return;
     }
     /* 地板快降慢升：比地板小就立刻跟着降，比地板大只允许每次抬 2%，
      * 这样持续发包时地板不会一路追到信号电平上把门关死。 */
-    Ultra.BANDS.forEach(function (b) {
-      var f = gateFloorDb[b.key];
-      if (f == null || es[b.key] < f) f = es[b.key];
-      else f = Math.min(es[b.key], f * 1.02);
-      gateFloorDb[b.key] = f;
-      var lvl = es[b.key] > Math.max(f * 2.5, 1e-9) && es[b.key] > maxE * 0.2;
-      gateOn[b.key] = lvl;
-      if (lvl) gateHold[b.key] = performance.now();
-    });
+    var f = gateFloorDb.mid;
+    if (f == null || eMid < f) f = eMid;
+    else f = Math.min(eMid, f * 1.02);
+    gateFloorDb.mid = f;
+    gateOn.mid = eMid > Math.max(f * 2.5, 1e-9);
+    if (gateOn.mid) gateHold.mid = performance.now();
     /* 刚刚有声、现在判断成静音 → 再放行 400ms，避免包和包之间的缝隙把锁弄断。 */
-    Ultra.BANDS.forEach(function (b) {
-      if (!gateOn[b.key] && gateHold[b.key] && performance.now() - gateHold[b.key] < 400) gateOn[b.key] = true;
-    });
+    if (!gateOn.mid && gateHold.mid && performance.now() - gateHold.mid < 400) gateOn.mid = true;
     var now = performance.now();
+    gateLatestE = { mid: eMid, floor: f };
     if (now - gateLogAt > 2000) {
       gateLogAt = now;
-      var act = Ultra.BANDS.filter(function (b) { return gateOn[b.key]; })
-        .map(function (b) { return b.name; }).join('/') || '无';
-      var cnt = decoders.filter(function (d) { return !d.muted && gateOn[d.band.key]; }).length;
-      if ($('dGate')) $('dGate').textContent = act + ' · ' + cnt + ' 个';
+      if ($('dGate')) $('dGate').textContent = '18.1k ' + (gateOn.mid ? '有声 · 解码中' : '安静 · 不解码');
     }
   }
   /* 每 8 块无条件全放行一次：门控只用来省 CPU，绝不作为「能不能解出」的唯一闸门。 */
@@ -473,18 +438,15 @@ var App = (function () {
   /* ---------- 接收 ---------- */
   function makeDecoders(sr) {
     decoders = [];
-    var speeds = [16, 24, 32];
-    Ultra.BANDS.forEach(function (b) {
-      speeds.forEach(function (sp) {
-        var d = new Ultra.StreamDecoder(sr, b, sp);
-        d.onPacket = function (payload) { onPacket(payload, b, sp); };
-        d.onError = function (kind) {
-          if (kind === 'crc') { inc('stCrc'); } else { inc('stSync'); }
-        };
-        d.onDiag = diagPush;
-        decoders.push(d);
-      });
-    });
+    /* 只开一个：18.1k + 24ms。原来 3 档 × 3 速度 = 9 个解码器是手机卡死/掉样的总根源。 */
+    var b = Ultra.bandByKey(ONE_BAND), sp = ONE_SP;
+    var d = new Ultra.StreamDecoder(sr, b, sp);
+    d.onPacket = function (payload) { onPacket(payload, b, sp); };
+    d.onError = function (kind) {
+      if (kind === 'crc') { inc('stCrc'); } else { inc('stSync'); }
+    };
+    d.onDiag = diagPush;
+    decoders.push(d);
   }
 
   /* 回执故意用比用户设定更高的音量：手机一开麦，安卓常把播放路由到听筒，实际很小声，
@@ -503,6 +465,26 @@ var App = (function () {
   /* 接收端回执：只要还有缺包、链路开着，就每 2.2 秒回一次位图，直到收齐。
    * 以前用「静默 0.9 秒」当触发条件，一旦解码器反复吐同一个包，lastPktAt 永远在刷新，
    * 回执就永远发不出去 —— 发端收到的是「一包都没确认」。这里改成纯节流，不再依赖静默。 */
+  /* 零回执：一包都没解出时也要回一句「我听到能量了，但解不出」。
+   * 关键：以前收端没解出任何包就完全沉默，发端只能看到「没回执」，永远分不清是对方没收到
+   * 还是自己听不到回执。总包数用 0 表示「什么都还没有」，发端据此重发并提示换档。 */
+  var zeroAckAt = 0;
+  function maybeZeroAck() {
+    if (!ackReplyOn || !tx || !ctx || !running) return;
+    if (textState.total) return;                    // 已经解出过包，走正常回执
+    var now = performance.now();
+    if (now - zeroAckAt < 4000) return;
+    var e = gateLatestE.mid;
+    var f = gateLatestE.floor || 0;
+    if (!(e > Math.max(f * 8, 1e-6))) return;       // 只是噪声，不打扰对方
+    zeroAckAt = now;
+    var pkt = Ultra.buildPacket(Ultra.ackPayload(++ackRound, 0, function () { return false; }));
+    log('没解出任何包，但仍回一条「听到了·解不出」· 18.1k/' + ACK_SP + 'ms', '#b4791f');
+    ackGainOn();
+    ackMark();
+    tx.send(pkt, Ultra.bandByKey(ACK_BAND), ACK_SP, function () { ackGainOff(); });
+  }
+
   function maybeAck() {
     if (!ackReplyOn || !tx || !ctx) return;
     if (!textState.total) return;
@@ -582,14 +564,14 @@ var App = (function () {
     Cal.queue = [];
     Cal.rows = [];
     Cal.best = null;
-    Cal.stage = 'A';
+    Cal.stage = 'B';                     // 只有一档一速，直接扫频率缩放，不再试 9 格档位
     Cal.k = 0;
-    Ultra.BANDS.forEach(function (b) {
-      [16, 24, 32].forEach(function (sp) { Cal.queue.push({ band: b.key, bname: b.name, sp: sp, scale: null }); });
-    });
+    for (var s = -0.008; s <= 0.0081; s += 0.001) {
+      Cal.queue.push({ band: ONE_BAND, bname: '18.1k', sp: ONE_SP, scale: 1 + s });
+    }
     $('btnCal').disabled = true;
     $('btnCalStop').disabled = false;
-    log('自动校正开始：阶段 A（9 格频带×符号，每格 1.8 秒）');
+    log('自动校正开始：18.1k / 24ms，扫频率缩放 −0.8%…+0.8%（17 格，约 20 秒，每格 1.2 秒）');
     calNext();
   }
 
@@ -866,14 +848,13 @@ var App = (function () {
     var sr = ctx ? ctx.sampleRate : 48000;
     var half = Math.min(chunk.length, Math.round(sr * 0.09));
     var slice = chunk.subarray(chunk.length - half);
-    Ultra.BANDS.forEach(function (b) {
-      var e = Ultra.bandEnergy(slice, sr, b);
-      var lvl2 = e.peak > 0 ? Math.min(100, Math.round(20 * Math.log10(e.peak + 1) * 3)) : 0;
-      var bar = $('bar-' + b.key), val = $('val-' + b.key);
-      if (!bar) return;
+    var e = Ultra.bandEnergy(slice, sr, band);
+    var lvl2 = e.peak > 0 ? Math.min(100, Math.round(20 * Math.log10(e.peak + 1) * 3)) : 0;
+    var bar = $('bar-' + band.key), val = $('val-' + band.key);
+    if (bar) {
       bar.style.width = lvl2 + '%';
-      val.textContent = lvl2 + '%';
-    });
+      if (val) val.textContent = lvl2 + '%';
+    }
     tickN++;
     var pk = Ultra.peakFreq(slice, sr, 16000, 23800, 80);
     var el = $('dPeak');
@@ -899,6 +880,7 @@ var App = (function () {
     }
     updateDbg();
     maybeAck();
+    maybeZeroAck();
   }
 
   /* 解码信息表：每个解码器一行（频带 × 符号长度） */
@@ -906,15 +888,12 @@ var App = (function () {
     var box = $('dDec');
     if (!box) return;
     box.innerHTML = '<div class="row2" style="color:#0a5f4f"><span>档 / 符号</span><span>状态</span><span>同步</span><span>CRC</span><span>边距</span></div>';
-    Ultra.BANDS.forEach(function (b) {
-      [16, 24, 32].forEach(function (sp) {
-        var d = document.createElement('div');
-        d.className = 'row2';
-        d.id = 'dec-' + b.key + '-' + sp;
-        d.innerHTML = '<span>' + b.name + '/' + sp + 'ms</span><span class="st">待机</span><span class="sy">0</span><span class="cr">0</span><span class="mg">—</span>';
-        box.appendChild(d);
-      });
-    });
+    var b = Ultra.bandByKey(ONE_BAND);
+    var d = document.createElement('div');
+    d.className = 'row2';
+    d.id = 'dec-' + b.key + '-' + ONE_SP;
+    d.innerHTML = '<span>18.1k/' + ONE_SP + 'ms</span><span class="st">待机</span><span class="sy">0</span><span class="cr">0</span><span class="mg">—</span>';
+    box.appendChild(d);
   }
 
   function updateDbg() {
@@ -960,7 +939,7 @@ var App = (function () {
     var t = $('txTag');
     if (t && b) t.textContent = (live ? '正在发 · ' : '档位 · ') + b.name + '（' + b.f0 + ' Hz 起）';
     var r = $('txRate');
-    if (r) r.textContent = symMs + 'ms/符号 · 每包 ' + chunkBytes + 'B · ' + (autoBand ? '三档轮流' : '单档');
+    if (r) r.textContent = '18.1k · ' + symMs + 'ms/符号 · 每包 ' + chunkBytes + 'B';
   }
 
   function markTxIdle() {
@@ -1155,6 +1134,12 @@ var App = (function () {
         ackListen(8000, function (ack) {
           if (!alive()) return;
           if (!ack) { log('没收到回执：这一轮当作全部失败，重发全部', '#b4791f'); round++; loop(); return; }
+          if (ack.total === 0) {
+            log('对方回执「听到了、但一包都没解出」：问题在数据链路本身。把两端都切 18.1k、各做一次自动校正再发', '#b4791f');
+            round++;
+            loop();
+            return;
+          }
           var miss = ack.missing();
           log('收到回执 #' + ack.round + '：对方已收 ' + (ack.total - miss.length) + '/' + ack.total +
             (miss.length ? '，缺 ' + miss.map(function (x) { return x + 1; }).join('、') : '，已齐'), '#0a5f4f');
@@ -1211,44 +1196,20 @@ var App = (function () {
       if (r === 'tx') ensureCtx();
     },
 
-    pickBand: function (key) {
-      if (key === 'auto') {
-        autoBand = true;
-        buildBandRow();
-        log('发送频段：自动（每遍换一档，18.1k→20.5k→22.3k 轮流）');
-        markTx(band);
-        return;
-      }
-      autoBand = false;
-      if (peerIsPC && key === 'top') {
-        log('对端是电脑：22.3k 在这台电脑上听不见，已自动切到 20.5k', '#b4791f');
-        key = 'hi';
-      }
-      band = Ultra.bandByKey(key);
-      buildBandRow();
-      log('发送频段切到 ' + band.name);
-      markTx(band);
-    },
-
-    peer: function (v) {
-      peerIsPC = (v === 'pc');
-      Array.prototype.forEach.call(document.querySelectorAll('[data-peer]'), function (b) {
-        b.className = 'pill' + (b.dataset.peer === v ? ' on' : '');
-      });
-      var nt = $('peerNote');
-      if (nt) nt.textContent = peerIsPC
-        ? '已按「电脑收」：22.3k 档自动停用，只轮 18.1k / 20.5k。'
-        : '手机麦克风能到 22.3k+，三档都能用。';
-      log(peerIsPC ? '对端按电脑处理：22.3k 档自动停用' : '对端按手机处理：三档可用');
+    /* 分档/变速逻辑退役：现在只有一个档（18.1k）+ 一个速度（24ms）。
+     * 这两个入口保留，是为了旧按钮/旧调用不出错，点了一律回「已固定单档」。 */
+    pickBand: function () {
+      log('已固定单档：18.1k（18100–19500 Hz），不再分档', '#b4791f');
       buildBandRow();
       markTx(band);
     },
 
-    speed: function (v) {      symMs = v;
-      Array.prototype.forEach.call(document.querySelectorAll('[data-sp]'), function (b) {
-        b.className = 'pill' + (parseInt(b.dataset.sp, 10) === v ? ' on' : '');
-      });
-      $('speedNote').textContent = '当前：' + v + 'ms/符号 ≈ ' + (1000 / v * 3 / 3 | 0) + ' B/s（含帧头开销约打七折）';
+    peer: function () {
+      log('单档模式下不需要选对端设备：18.1k 手机和电脑都收得到', '#b4791f');
+    },
+
+    speed: function () {
+      log('已固定 24ms 一种速度（16/32ms 已下线，减少变量）', '#b4791f');
       markTx(band);
     },
 
@@ -1329,7 +1290,7 @@ var App = (function () {
         });
       }
       step();
-      log('开始循环发校准包：' + (autoBand ? '自动三档轮流' : band.name) + ' · ' + symMs + 'ms');
+      log('开始循环发校准包：' + band.name + ' · ' + symMs + 'ms');
     },
 
     /* 一键硬停：循环、长包、探测音全部掐掉。用户按「停」就该立刻没声音。 */
@@ -1436,7 +1397,7 @@ var App = (function () {
             '可听带(0–16k) 峰值 ' + peakAud.toFixed(1) + ' dB，比底噪高 ' + rise.toFixed(1) + ' dB';
           log(msg, rise > 6 ? '#b4791f' : '#0a5f4f');
           log(rise > 6
-            ? '→ 确实有可听成分：多半是扬声器非线性/瞬态，先把音量降到 0.35 再测，或换 22.3k 档'
+            ? '→ 确实有可听成分：多半是扬声器非线性/瞬态，可把音量降到 0.35 再测'
             : '→ 可听带几乎没抬起来：说明发出去的基本是纯超声，你听到的可能是从扬声器/功放漏出的杂音，或机械振动',
             rise > 6 ? '#b4791f' : '#0a5f4f');
         }, 2600);
@@ -1447,19 +1408,15 @@ var App = (function () {
 
     quietPreset: function () {
       this.gain(0.35);
-      this.speed(32);
       this.repeat(3);
-      log('静音优先：音量 0.35 + 32ms + 每包 3 遍（慢，但最不吵）');
+      log('静音优先：音量 0.35 + 每包 3 遍（速度固定 24ms，不可调）');
     },
 
-    /* 最静一组：直接顶到 22.3k（离人耳最远），音量压到 0.35。
-     * 手机扬声器在 22k 以上效率很低，能过就过，过不了再退回 20.5k。 */
+    /* 22.3k 档已下线（电脑麦克风根本收不到），这里只保留「压音量」的语义。 */
     quietTop: function () {
       this.gain(0.35);
-      this.speed(32);
       this.repeat(3);
-      this.pickBand('top');
-      log('极静：22.3k + 音量 0.35 + 32ms（离人耳最远；若对方完全收不到就退回「自动 · 三档轮流」）');
+      log('已压到音量 0.35：频段仍固定 18.1k（22.3k 已下线，电脑收不到）', '#b4791f');
     },
 
     diagClear: function () {
@@ -1589,8 +1546,8 @@ var App = (function () {
             qBytes -= c.length;
             if (qBytes < 0) qBytes = 0;
             try {
-              gateProbe(c);
-              var blind = gateBlind();
+              if (!gateFaulted) gateProbe(c);
+              var blind = gateFaulted || gateBlind();
               for (var i = 0; i < decoders.length; i++) {
                 var d = decoders[i];
                 if (d.muted) continue;
