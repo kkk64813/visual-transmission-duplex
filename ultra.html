@@ -313,11 +313,11 @@
 
 
 <footer>
-  纯本地：声音只在空气里走，不经过网络。 版本 v2026-11-25q（门控修正 · 回执 32ms/8s · 回执 dBFS + 本机已发次数 · 收齐回执）返回 <a href="./index.html">首页</a> ·
+  纯本地：声音只在空气里走，不经过网络。 版本 v2026-11-25r（解码搬出音频回调防卡死 · 门控修正 · 回执 32ms/8s · 回执 dBFS）返回 <a href="./index.html">首页</a> ·
   双工控制通道见 <a href="./duplex.html">duplex</a>
 </footer>
 
-<script src="ultra-core.js?v=20261125q"></script>
+<script src="ultra-core.js?v=20261125r"></script>
 <script>
 var App = (function () {
   var band = Ultra.BANDS[0];       // 默认 18.1k 实测 18k 听不见
@@ -348,6 +348,8 @@ var App = (function () {
   var micStream = null, proc = null;
   var decoders = [];               // 3 band × 2 speed
   var running = false;
+  /* 音频回调 → 队列 → 定时泵：解码和录音彻底解耦，手机不会再被解码卡死 */
+  var rxQueue = [], rxPump = null, qWarned = false, gateFaulted = false, rxPending = false;
   var textState = { total: 0, parts: {} };
   var fileState = null;
   var bufForMeter = new Float32Array(0);
@@ -430,14 +432,14 @@ var App = (function () {
       es[b.key] = e;
       if (e > maxE) { maxE = e; maxKey = b.key; }
     });
-    /* 前 400ms 当作环境底噪（这段不计入放行判断，也不喂样本，代价很小）。 */
+    /* 前 400ms 一边量环境底噪、一边照常放行（宁可多跑几块 CPU，也不能把开头的包丢掉）。 */
     if (gateWarm < 5) {
       gateWarm++;
       Ultra.BANDS.forEach(function (b) {
         var f = gateFloorDb[b.key];
         gateFloorDb[b.key] = f == null ? es[b.key] : Math.min(f, es[b.key]);
+        gateOn[b.key] = true;
       });
-      Ultra.BANDS.forEach(function (b) { gateOn[b.key] = false; });
       if ($('dGate')) $('dGate').textContent = '量底噪… ' + gateWarm + '/5';
       return;
     }
@@ -852,6 +854,50 @@ var App = (function () {
       if (lv) lv.textContent = pk.f ? ('听到 ' + (pk.f >= 17500 ? '超声' : '低频杂音')) : '很安静';
       updateDbg();
     }
+    maybeAck();
+  }
+
+  /* 轻量界面刷新：只在音频回调里读最后一块、画能量条，不做峰值扫描、不碰解码。 */
+  var liteN = 0;
+  function meterTickLite(chunk) {
+    lastChunk = chunk;
+    liteN++;
+    if (liteN % 4 !== 0) return;                  // 约 0.35 秒一次
+    var sr = ctx ? ctx.sampleRate : 48000;
+    var half = Math.min(chunk.length, Math.round(sr * 0.09));
+    var slice = chunk.subarray(chunk.length - half);
+    Ultra.BANDS.forEach(function (b) {
+      var e = Ultra.bandEnergy(slice, sr, b);
+      var lvl2 = e.peak > 0 ? Math.min(100, Math.round(20 * Math.log10(e.peak + 1) * 3)) : 0;
+      var bar = $('bar-' + b.key), val = $('val-' + b.key);
+      if (!bar) return;
+      bar.style.width = lvl2 + '%';
+      val.textContent = lvl2 + '%';
+    });
+    tickN++;
+    var pk = Ultra.peakFreq(slice, sr, 16000, 23800, 80);
+    var el = $('dPeak');
+    if (el) {
+      el.textContent = pk.f ? pk.f : '安静';
+      el.style.fontSize = pk.f ? '38px' : '22px';
+      el.style.color = pk.f >= 17500 ? 'var(--accent-2)' : (pk.f ? '#c0392b' : 'var(--muted)');
+    }
+    var lv = $('rxNow');
+    if (lv) lv.textContent = pk.f ? ('听到 ' + (pk.f >= 17500 ? '超声' : '低频杂音')) : '很安静';
+    /* 收样率：回调里只累加样本数，这里算比值 —— 这才是「麦克风到底喂进来多少」的真数。 */
+    if (rxT0) {
+      var el2 = (performance.now() - rxT0) / 1000;
+      if (el2 > 1) {
+        var ratio = rxTotal / (sr * el2);
+        var dr = document.getElementById('dDrop');
+        if (dr) dr.textContent = (ratio * 100).toFixed(1) + '%';
+        if (ratio < 0.9 && !dropWarned) {
+          dropWarned = true;
+          log('收样只剩 ' + (ratio * 100).toFixed(0) + '%：解码仍跟不上，先把后台应用关掉；UI 已不再阻塞音频', '#b4791f');
+        }
+      }
+    }
+    updateDbg();
     maybeAck();
   }
 
@@ -1501,51 +1547,63 @@ var App = (function () {
     },
 
     startRx: function () {
-      if (running) return;
+      if (running || rxPending) return;          // 连点两次会并发开麦，安卓上直接卡死
+      rxPending = true;
       Ultra.openMic().then(function (stream) {
         micStream = stream;
         ensureCtx();
         makeDecoders(ctx.sampleRate);
         proc = ctx.createScriptProcessor(4096, 1, 1);
         var src = ctx.createMediaStreamSource(stream);
-        var saveMode = false, chunkN = 0;
+        var saveMode = false, chunkN = 0, qBytes = 0;
+        /* 音频回调里只做「入队 + 计账」，绝不做解码。
+         * 以前解码直接在 onaudioprocess 里跑，手机 CPU 一慢，回调被占住 → 浏览器丢麦克风采样
+         * （真机只剩 60%），严重时整个页面卡死、连监听都点不动。现在解码交给下面的泵。 */
         proc.onaudioprocess = function (ev) {
           var chunk = new Float32Array(ev.inputBuffer.getChannelData(0));
           chunkN++;
-          /* 先花很小代价（三档各 8 个 Goertzel）测一下现在哪一档里有声音，
-           * 只把这一档的解码器喂进去。手机跑满 9 个解码器会掉样，实测只剩 60% 采样。 */
-          gateProbe(chunk);
-          var blind = gateBlind();
-          for (var i = 0; i < decoders.length; i++) {
-            var d = decoders[i];
-            if (d.muted) continue;
-            if (!blind && !gateOn[d.band.key]) continue;
-            d.push(chunk);
-          }
           rxTotal += chunk.length;
           if (!rxT0) rxT0 = performance.now();
-          var el2 = (performance.now() - rxT0) / 1000;
-          if (el2 > 1) {
-            var ratio = rxTotal / (ctx.sampleRate * el2);
-            var el = document.getElementById('dDrop');
-            if (el) el.textContent = (ratio * 100).toFixed(1) + '%';
-            if (ratio < 0.9 && !saveMode && chunkN > 30) {
-              saveMode = true;
-              decoders.forEach(function (dd) { dd.muted = (dd.symMs !== symMs); });
-              log('收样只剩 ' + (ratio * 100).toFixed(0) + '%：已自动切省电模式（只跑 ' + symMs +
-                'ms 一档 × 三档频带，再靠能量门控压到一档）。要恢复三档速度请重新点开始监听', '#b4791f');
+          try {
+            rxQueue.push(chunk);
+            qBytes += chunk.length;
+            var cap = ctx.sampleRate * 4;                 // 最多压 4 秒，再多就丢最旧的
+            while (qBytes > cap && rxQueue.length > 1) { qBytes -= rxQueue.shift().length; }
+            if (qBytes > ctx.sampleRate * 2 && !qWarned) {
+              qWarned = true;
+              log('解码跟不上：已积压 2 秒音频，先丢最旧的保实时', '#b4791f');
             }
-            if (ratio < 0.75 && !dropWarned) {
-              dropWarned = true;
-              log('麦克风在丢样（收样只有 ' + (ratio * 100).toFixed(0) + '%）：这已经不是软件能救回来的量，'
-                + '关掉后台应用/别的标签页，或换台手机再试', '#c0392b');
-            }
-          }
-          if (chunkN % 3 === 0) meterTick(chunk);     // 界面约 0.26 秒刷一次，别跟解码抢 CPU
+          } catch (e) { /* 入队都失败就什么都不做，别让回调抛异常 */ }
+          if (chunkN % 2 === 1) meterTickLite(chunk);       // 界面只读最后一块，很便宜
         };
         src.connect(proc);
         proc.connect(ctx.destination);
+        /* 解码泵：与音频回调解耦，每 6ms 消化一块，UI 永远不会被它卡住。 */
+        rxQueue = []; qBytes = 0; qWarned = false;
+        if (rxPump) clearInterval(rxPump);
+        rxPump = setInterval(function () {
+          if (!running) return;
+          var budget = rxQueue.length > 8 ? 2 : 1;         // 一次只啃一块，绝不把主线程吃满（回调也跑在主线程）
+          while (budget-- > 0 && rxQueue.length) {
+            var c = rxQueue.shift();
+            qBytes -= c.length;
+            if (qBytes < 0) qBytes = 0;
+            try {
+              gateProbe(c);
+              var blind = gateBlind();
+              for (var i = 0; i < decoders.length; i++) {
+                var d = decoders[i];
+                if (d.muted) continue;
+                if (!blind && !gateOn[d.band.key]) continue;
+                d.push(c);
+              }
+            } catch (e) {
+              if (!gateFaulted) { gateFaulted = true; log('门控报错，已关闭门控直接全档解码：' + (e && e.message ? e.message : e), '#b4791f'); }
+            }
+          }
+        }, 6);
         running = true;
+        rxPending = false;
         rxTotal = 0; rxT0 = 0; dropWarned = false;
         $('btnMic').disabled = true;
         $('btnStop').disabled = false;
@@ -1562,13 +1620,17 @@ var App = (function () {
         log('开始监听 · ' + ctx.sampleRate + ' Hz · ' + decoders.length + ' 个解码器（按能量门控只跑有声音的那档）');
         if (ctx.sampleRate < 48000) log('注意：设备只给到 ' + ctx.sampleRate + ' Hz，20.5k 档接近奈奎斯特，可能解不出，建议用 18.1k 档', '#b4791f');
       }).catch(function (e) {
+        rxPending = false;
         log('麦克风打不开：' + (e && e.message ? e.message : e), '#c0392b');
         setState('麦克风被拒', false);
+        try { $('btnMic').disabled = false; } catch (e2) {}
       });
     },
 
     stopRx: function () {
       running = false;
+      if (rxPump) { clearInterval(rxPump); rxPump = null; }
+      rxQueue = [];
       if (proc) { try { proc.disconnect(); } catch (e) {} proc = null; }
       if (micStream) { micStream.getTracks().forEach(function (t) { t.stop(); }); micStream = null; }
       $('btnMic').disabled = false;
