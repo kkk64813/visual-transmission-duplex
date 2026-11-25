@@ -68,6 +68,22 @@
   .warn{background:var(--warn-bg);border:1px solid #f0e2c4;color:#7a5416;border-radius:10px;
     padding:10px 12px;font-size:13px;line-height:1.7;margin-bottom:12px}
   .hide{display:none}
+  /* 大号实时频率：一眼看收发在几千赫 */
+  .live{display:flex;align-items:flex-end;gap:10px;margin:2px 0 4px}
+  .live .hz{font-size:38px;font-weight:700;letter-spacing:-1px;line-height:1;
+    font-variant-numeric:tabular-nums;color:var(--accent-2)}
+  .live .unit{font-size:14px;font-weight:600;color:var(--muted);padding-bottom:3px}
+  .live .tag{font-size:12px;color:var(--muted);padding-bottom:5px}
+  /* 折叠卡：自检/高级全部收进一个 details 里，默认收起 */
+  details.card{padding:0}
+  details.card>summary{list-style:none;cursor:pointer;padding:13px 14px;font-size:13px;
+    letter-spacing:.12em;text-transform:uppercase;color:var(--muted);display:flex;align-items:center;gap:8px}
+  details.card>summary::-webkit-details-marker{display:none}
+  details.card>summary::after{content:'＋';margin-left:auto;color:var(--muted);font-size:15px}
+  details.card[open]>summary::after{content:'－'}
+  details.card>summary:hover{color:var(--ink)}
+  details.card>.body{padding:0 14px 14px}
+  details.card[open]>summary{border-bottom:1px solid var(--line);margin-bottom:12px}
   a{color:var(--accent);text-decoration:none}
   footer{color:var(--muted);font-size:12px;text-align:center;padding:0 16px 28px}
 </style>
@@ -91,102 +107,81 @@
   <!-- 接收端 -->
   <section id="panelRx">
     <div class="card">
-      <h3>链路</h3>
-      <div class="row">
+      <div class="live">
+        <span class="hz" id="dPeak" style="font-size:22px;color:var(--muted)">待机</span>
+        <span class="unit">Hz</span>
+        <span class="tag">← 耳朵此刻听到的最强音</span>
+      </div>
+      <div class="row" style="margin-top:12px">
         <button class="primary" id="btnMic" onclick="App.startRx()">开始监听</button>
         <button id="btnStop" onclick="App.stopRx()" disabled>停止</button>
         <button class="pill" onclick="App.clearAll()">清空</button>
+        <span class="hint" id="rxNow" style="margin:0">待机</span>
       </div>
+      <div id="meters" style="margin-top:12px"></div>
       <div class="stats">
         <span>解出包 <b id="stPk">0</b></span>
         <span>同步失配 <b id="stSync">0</b></span>
         <span>CRC 失败 <b id="stCrc">0</b></span>
         <span>采样 <b id="stSr">—</b></span>
       </div>
-      <div class="hint">电脑或手机任一端开这里，另一端去「发送端」。三档频带同时在解，不用手动对齐。</div>
-    </div>
-
-    <div class="card">
-      <h3>频带能量（实时）</h3>
-      <div id="meters"></div>
-      <div class="hint">让对方点「发探测音」，哪一档的条子明显跳起来，就说明这条频带在这对设备上能过；全都不动就是硬件把这段滤掉了。</div>
-    </div>
-
-    <div class="card">
-      <h3>解码信息</h3>
-      <div class="dbg">
-        <div>采样率 <b id="dSr">—</b> · 麦克风原始 <b id="dMic">—</b></div>
-        <div>此刻最强音 <b id="dPeak">—</b> <span class="hint" style="margin:0">（每 0.5 秒量一次，看它到底落在几千赫）</span></div>
-        <div>缓冲 <b id="dBuf">—</b> · 扫描位置 <b id="dScan">—</b></div>
-        <div>收样 <b id="dDrop">—</b> <span class="hint" style="margin:0">（低于 100% 说明手机 CPU 跟不上、麦克风在丢样，符号会整体被压缩）</span></div>
-      </div>
-      <div id="dDec" class="dbg" style="margin-top:8px"></div>
-      <div class="row" style="margin-top:10px;align-items:center">
-        <span class="hint" style="margin:0;flex:none">频率校准</span>
-        <input type="range" id="rCal" min="-1" max="1" step="0.1" value="0" style="flex:1;accent-color:#0e7c66">
-        <span class="hint" id="vCal" style="margin:0;flex:none;width:64px;text-align:right">自动</span>
-        <button class="pill" onclick="App.calib(0)">自动</button>
-      </div>
-      <div class="hint">两端晶振差一点，18k 上 1% 就是 180 Hz，差不多一个音距，会把音判到隔壁去。<br>
-        这一栏默认「自动」：锁上后自己估出补偿量并显示在下面；只有怎么都锁不上时才手动拨。
-        拨到「解出包」开始跳，就是对了。</div>
-      <div class="hint">
-        <b>怎么读：</b>同步命中高、CRC 少 → 链路可以；同步一直 0 → 声音没进来或频带不对；
-        CRC 大量失败但同步有 → 音节对齐/时钟漂移，把符号调到 24ms 再试。
-        最后一列「边距」是判决把握，低于 6 dB 基本就是噪声在乱点了。
-      </div>
-    </div>
-
-    <div class="card">
-      <h3>一键自动校正</h3>
-      <div class="hint" style="margin-top:0">
-        让对方点「循环发校准包」（会一直发），这边点下面的按钮就行：自动把 3 档频带 × 3 种符号长度挨个试一遍，
-        再在最能过的那一格里把频率缩放从 −1.2% 扫到 +1.2%，最后把最好的那组直接应用，并出一份报告。
-      </div>
-      <div class="row" style="margin-top:8px">
-        <button class="primary" id="btnCal" onclick="App.autoCal()">一键自动校正</button>
-        <button id="btnCalStop" onclick="App.calStop()" disabled>停止校正</button>
-        <span class="hint" id="calStat" style="margin:0">未开始</span>
-      </div>
-      <textarea id="calOut" class="out" readonly style="font-size:11px;line-height:1.5;height:210px;width:100%;overflow:auto;white-space:pre;resize:vertical;font-family:ui-monospace,Menlo,Consolas,monospace;margin-top:8px">（未校正）</textarea>
-      <div class="row" style="margin-top:6px">
-        <button class="pill" onclick="App.calSelect()">全选报告</button>
-        <button class="pill" onclick="App.calCopy()">复制报告</button>
-      </div>
-    </div>
-
-    <div class="card">
-      <h3>诊断日志（全选复制贴出来就能定位）</h3>
-      <div class="hint" style="margin-top:0">每次「锁上 / 包内复检不过 / CRC 失败 / 收到包」都记一行：档位、符号长度、同步命中、估出的缩放、边距、漂移、长度字段。出问题时点「全选」，长按文字框复制，直接贴过来。</div>
-      <div class="row" style="margin-top:8px">
-        <button class="pill" onclick="App.diagSelect()">全选</button>
-        <button class="pill" onclick="App.diagCopy()">复制</button>
-        <button class="pill" onclick="App.diagClear()">清空</button>
-        <span class="hint" id="diagCnt" style="margin:0">0 行</span>
-      </div>
-      <textarea id="diagBox" class="out" readonly style="font-size:11px;line-height:1.5;height:200px;width:100%;overflow:auto;white-space:pre;resize:vertical;font-family:ui-monospace,Menlo,Consolas,monospace">（空）</textarea>
+      <div class="hint">哪一档能量条跳起来，就说明这条频带在这对设备上能过。电脑麦克风上限约 21.2k，22.3k 那条在电脑上基本是死的。</div>
     </div>
 
     <div class="card">
       <h3>收到的文字</h3>
       <div class="row" style="margin-bottom:8px">
-        <span class="hint" style="margin:0;flex:none">反向回执</span>
-        <button class="pill on" data-ar="1" onclick="App.ackReply(true)">缺包自动回执</button>
-        <button class="pill" data-ar="0" onclick="App.ackReply(false)">不回执</button>
-      </div>
-      <div class="hint" style="margin-top:0">开着这个，收端在缺包时会自己用 18.1k 播一段 7 字节位图（约 1.3 秒），告诉发端哪些包没到；发端只会补那几包，不用整段重发。</div>
-      <div class="row" style="margin-top:8px">
-        <button onclick="App.loopAck(true)">循环发回执（自检）</button>
-        <button onclick="App.loopAck(false)">停</button>
+        <span class="hint" style="margin:0;flex:none">回执</span>
+        <button class="pill on" data-ar="1" onclick="App.ackReply(true)">缺包自动回</button>
+        <button class="pill" data-ar="0" onclick="App.ackReply(false)">不回</button>
+        <button class="pill" onclick="App.loopAck(true)">自检：循环发回执</button>
+        <button class="pill" onclick="App.loopAck(false)">停</button>
         <span class="hint" id="ackLoopCnt" style="margin:0">没在循环</span>
       </div>
-      <div class="hint" style="margin-top:6px">自检用：这边一直播回执包，让对方点「回执自检（听 8 秒）」。能把「对方没发」和「发了收不到」分开。</div>
       <div class="out" id="outText">（空）</div>
       <div id="fileBox" class="hide" style="margin-top:10px">
         <div class="hint" id="fileInfo"></div>
         <div class="prog"><i id="fileProg"></i></div>
       </div>
     </div>
+
+    <details class="card">
+      <summary>自检 · 高级</summary>
+      <div class="body">
+        <div class="row">
+          <button class="primary" id="btnCal" onclick="App.autoCal()">一键自动校正</button>
+          <button id="btnCalStop" onclick="App.calStop()" disabled>停止</button>
+          <span class="hint" id="calStat" style="margin:0">未开始</span>
+        </div>
+        <div class="hint" style="margin-top:6px">让对方点「循环发校准包」，这边点上面的按钮：3 档频带 × 3 种符号长度挨个试，再把最能过的那组应用。</div>
+        <textarea id="calOut" class="out" readonly style="font-size:11px;line-height:1.5;height:150px;width:100%;overflow:auto;white-space:pre;resize:vertical;font-family:ui-monospace,Menlo,Consolas,monospace;margin-top:8px">（未校正）</textarea>
+        <div class="row" style="margin-top:6px">
+          <button class="pill" onclick="App.calSelect()">全选报告</button>
+          <button class="pill" onclick="App.calCopy()">复制报告</button>
+        </div>
+
+        <div class="dbg" style="margin-top:14px">
+          <div>采样率 <b id="dSr">—</b> · 麦克风原始 <b id="dMic">—</b></div>
+          <div>缓冲 <b id="dBuf">—</b> · 扫描位置 <b id="dScan">—</b></div>
+          <div>收样 <b id="dDrop">—</b> <span class="hint" style="margin:0">（低于 100% = CPU 跟不上，在丢样）</span></div>
+        </div>
+        <div id="dDec" class="dbg" style="margin-top:8px"></div>
+        <div class="row" style="margin-top:10px;align-items:center">
+          <span class="hint" style="margin:0;flex:none">频率校准</span>
+          <input type="range" id="rCal" min="-1" max="1" step="0.1" value="0" style="flex:1;accent-color:#0e7c66">
+          <span class="hint" id="vCal" style="margin:0;flex:none;width:64px;text-align:right">自动</span>
+          <button class="pill" onclick="App.calib(0)">自动</button>
+        </div>
+
+        <div class="row" style="margin-top:14px">
+          <button class="pill" onclick="App.diagSelect()">全选日志</button>
+          <button class="pill" onclick="App.diagCopy()">复制日志</button>
+          <button class="pill" onclick="App.diagClear()">清空</button>
+          <span class="hint" id="diagCnt" style="margin:0">0 行</span>
+        </div>
+        <textarea id="diagBox" class="out" readonly style="font-size:11px;line-height:1.5;height:170px;width:100%;overflow:auto;white-space:pre;resize:vertical;font-family:ui-monospace,Menlo,Consolas,monospace;margin-top:8px">（空）</textarea>
+      </div>
+    </details>
 
     <div class="card">
       <h3>日志</h3>
@@ -196,82 +191,24 @@
 
   <!-- 发送端 -->
   <section id="panelTx" class="hide">
-    <div class="warn">
-      超声带宽只有约 <b>20 字节/秒</b>：一段 60 字的短句约 4 秒，小文件（几 KB）要几分钟。
-      这是给「完全无网络、只想送一句话/一串密码」的场景用的，不适合传大文件。
-    </div>
-
     <div class="card">
-      <h3>频段</h3>
-      <div class="row" id="bandRow"></div>
-      <div class="hint" id="bandNote"></div>
-      <div class="hint" style="color:#b4791f">实测：电脑麦克风上限约 21.2k，收不到 22.3k 那一档。所以「电脑当接收端」时只用 18.1k / 20.5k，别开 22.3k，也别用「自动轮流」（它会白白浪费 1/3 的轮次）。</div>
-      <div class="row" style="margin-top:10px">
-        <button id="btnProbe" onclick="App.probe()">发探测音（1.2 秒）</button>
-        <button onclick="App.selfListen()">自听录音（2 秒）</button>
-        <button onclick="App.calibrate()">先发校准（3 个短包）</button>
-        <span class="hint" style="margin:0">先探测再发送，能省掉来回试。</span>
+      <div class="live">
+        <span class="hz" id="sOut" style="font-size:22px;color:var(--muted)">静音</span>
+        <span class="unit">Hz</span>
+        <span class="tag" id="txTag">喇叭此刻在放</span>
       </div>
-      <div class="hint">「先发校准」= 连发 3 个最短的包，让对方先锁上、把频率补偿估准（显示成「自动 ×1.0…」），之后正式内容才不容易整包报废。</div>
-      <div class="row" style="margin-top:8px">
+      <div class="row" style="margin-top:12px" id="bandRow"></div>
+      <div class="hint" id="bandNote"></div>
+      <div class="row" style="margin-top:10px">
         <button class="pill" data-gn="0.35" onclick="App.gain(0.35)">音量 · 静默</button>
         <button class="pill" data-gn="0.5" onclick="App.gain(0.5)">音量 · 轻</button>
         <button class="pill on" data-gn="0.72" onclick="App.gain(0.72)">音量 · 标准</button>
         <button class="pill" data-gn="0.9" onclick="App.gain(0.9)">音量 · 响</button>
       </div>
       <div class="row" style="margin-top:8px">
-        <button onclick="App.quietPreset()">一键「静音优先」</button>
-        <span class="hint" style="margin:0">静默音量 + 32ms 慢速：最不容易被人耳听到的一组</span>
-      </div>
-      <div class="row" style="margin-top:6px">
-        <button onclick="App.quietTop()">一键「极静 22.3k」</button>
-        <span class="hint" style="margin:0">直接顶到 22.3k 档（离人耳最远），代价是手机扬声器可能几乎发不出来</span>
-      </div>
-      <div class="row" style="margin-top:8px">
-        <span class="hint" style="margin:0;flex:none">可靠发送</span>
-        <button class="pill on" data-wa="1" onclick="App.waitAck(true)">等对方回执补包</button>
-        <button class="pill" data-wa="0" onclick="App.waitAck(false)">不等（盲发）</button>
-        <button class="pill" onclick="App.testMic()">测回执麦克风</button>
-        <button class="pill" onclick="App.testAck()">回执自检（听 8 秒）</button>
-      </div>
-      <div class="hint" style="margin-top:6px">「等对方回执」时会自动开麦收对方的数字回执：对方收齐就停，缺哪包只补哪包，最多来回 6 轮。</div>
-      <div class="row" style="margin-top:8px">
-        <button id="btnLoop" onclick="App.loopCal()">循环发校准包</button>
         <button onclick="App.stopAll()" style="color:#c0392b">■ 立即硬停</button>
-        <span class="hint" id="loopCnt" style="margin:0">点一次开始，再点一次停</span>
+        <span class="hint" id="txRate" style="margin:0"></span>
       </div>
-      <div class="hint" style="margin-top:6px">对方点「一键自动校正」时用这个：会一直重复发同一个短包，直到你点停。</div>
-      <div class="hint">
-        人耳听到的那点声音，几乎都是喇叭自己把超声“检波”出来的，跟频段高低关系不大：<b>幅度降一半，失真降到四分之一</b>。
-        所以想去掉声音，先降音量，再降速度（符号越长，同样的距离越不费劲），不要先换频段。
-      </div>
-      <div class="dbg" style="margin-top:10px">
-        <div>本机采样率 <b id="sSr">—</b> · 实际发出 <b id="sOut">—</b> <span class="hint" style="margin:0">（喇叭真的在放几千赫，这里显示的不是设定值）</span></div>
-      </div>
-    </div>
-
-    <div class="card">
-      <h3>速度与重复</h3>
-      <div class="row">
-        <button class="pill" data-sp="16" onclick="App.speed(16)">快 · 16ms</button>
-        <button class="pill on" data-sp="24" onclick="App.speed(24)">稳 · 24ms</button>
-        <button class="pill" data-sp="32" onclick="App.speed(32)">很稳 · 32ms</button>
-      </div>
-      <div class="row" style="margin-top:8px">
-        <button class="pill" data-rp="2" onclick="App.repeat(2)">每包发 2 遍</button>
-        <button class="pill" data-rp="3" onclick="App.repeat(3)">3 遍</button>
-        <button class="pill on" data-rp="1" onclick="App.repeat(1)">1 遍</button>
-      </div>
-      <div class="row" style="margin-top:8px">
-        <span class="hint" style="margin:0;flex:none">每包字节</span>
-        <button class="pill" data-cb="8" onclick="App.chunk(8)">8</button>
-        <button class="pill" data-cb="12" onclick="App.chunk(12)">12</button>
-        <button class="pill on" data-cb="16" onclick="App.chunk(16)">16</button>
-        <button class="pill" data-cb="24" onclick="App.chunk(24)">24</button>
-        <button class="pill" data-cb="48" onclick="App.chunk(48)">48</button>
-      </div>
-      <div class="hint" id="chunkNote" style="margin-top:6px">默认 16 字节 ≈ 24ms 下 1.7 秒一包（实测真机 2.6 秒以上的单包几乎必挂）。中文一个字 3 字节，所以中文尤其要短包 + 回执补包。</div>
-      <div class="hint" id="speedNote"></div>
     </div>
 
     <div class="card">
@@ -284,15 +221,82 @@
       <div class="prog"><i id="txtProg"></i></div>
     </div>
 
-    <div class="card">
-      <h3>发小文件（≤ 8 KB）</h3>
-      <div class="row">
-        <input type="file" id="file" onchange="App.pickFile(this)">
-        <button class="primary" id="btnSendFile" onclick="App.sendFile()" disabled>发送文件</button>
+    <details class="card">
+      <summary>发送设置（速度 / 每包字节 / 回执）</summary>
+      <div class="body">
+        <div class="row">
+          <span class="hint" style="margin:0;flex:none">对方用</span>
+          <button class="pill on" data-peer="phone" onclick="App.peer('phone')">手机收</button>
+          <button class="pill" data-peer="pc" onclick="App.peer('pc')">电脑收（≤21.2k）</button>
+        </div>
+        <div class="hint" id="peerNote">电脑麦克风最高约 21.2k，选「电脑收」后 22.3k 档自动不用，只轮 18.1k / 20.5k。</div>
+        <div class="row" style="margin-top:12px">
+          <button class="pill" data-sp="16" onclick="App.speed(16)">快 · 16ms</button>
+          <button class="pill on" data-sp="24" onclick="App.speed(24)">稳 · 24ms</button>
+          <button class="pill" data-sp="32" onclick="App.speed(32)">很稳 · 32ms</button>
+        </div>
+        <div class="row" style="margin-top:8px">
+          <button class="pill" data-rp="2" onclick="App.repeat(2)">每包发 2 遍</button>
+          <button class="pill" data-rp="3" onclick="App.repeat(3)">3 遍</button>
+          <button class="pill on" data-rp="1" onclick="App.repeat(1)">1 遍</button>
+        </div>
+        <div class="row" style="margin-top:8px">
+          <span class="hint" style="margin:0;flex:none">每包字节</span>
+          <button class="pill" data-cb="8" onclick="App.chunk(8)">8</button>
+          <button class="pill" data-cb="12" onclick="App.chunk(12)">12</button>
+          <button class="pill on" data-cb="16" onclick="App.chunk(16)">16</button>
+          <button class="pill" data-cb="24" onclick="App.chunk(24)">24</button>
+          <button class="pill" data-cb="48" onclick="App.chunk(48)">48</button>
+        </div>
+        <div class="hint" id="chunkNote" style="margin-top:6px">默认 16 字节 ≈ 24ms 下 1.7 秒一包（实测真机 2.6 秒以上的单包几乎必挂）。</div>
+        <div class="hint" id="speedNote"></div>
+        <div class="row" style="margin-top:12px">
+          <span class="hint" style="margin:0;flex:none">可靠发送</span>
+          <button class="pill on" data-wa="1" onclick="App.waitAck(true)">等回执补包</button>
+          <button class="pill" data-wa="0" onclick="App.waitAck(false)">不等（盲发）</button>
+        </div>
       </div>
-      <div class="hint" id="fileSendInfo">8 KB 大约需要 6–8 分钟，中途别切后台。</div>
-      <div class="prog"><i id="fileSendProg"></i></div>
-    </div>
+    </details>
+
+    <details class="card">
+      <summary>自检 · 高级</summary>
+      <div class="body">
+        <div class="row">
+          <button id="btnProbe" onclick="App.probe()">发探测音（1.2 秒）</button>
+          <button onclick="App.selfListen()">自听录音（2 秒）</button>
+          <button onclick="App.calibrate()">先发校准（3 短包）</button>
+        </div>
+        <div class="hint" style="margin-top:6px">探测音先确认这条频带能不能过；自听录音会把「可听带 / 超声带」两个 dB 数报出来。</div>
+        <div class="row" style="margin-top:10px">
+          <button class="pill" onclick="App.testMic()">测回执麦克风</button>
+          <button class="pill" onclick="App.testAck()">回执自检（听 8 秒）</button>
+        </div>
+        <div class="row" style="margin-top:10px">
+          <button id="btnLoop" onclick="App.loopCal()">循环发校准包</button>
+          <span class="hint" id="loopCnt" style="margin:0">点一次开始，再点一次停</span>
+        </div>
+        <div class="dbg" style="margin-top:12px">
+          <div>本机采样率 <b id="sSr">—</b></div>
+        </div>
+        <div class="row" style="margin-top:12px">
+          <button onclick="App.quietPreset()">一键「静音优先」</button>
+          <button onclick="App.quietTop()">一键「极静 22.3k」</button>
+        </div>
+        <div class="hint">人耳听到的那点声音，多是喇叭把超声“检波”出来的：幅度降一半，失真降到四分之一。想安静先降音量，再降速度，别先换频段。</div>
+      </div>
+    </details>
+
+    <details class="card">
+      <summary>发小文件（≤ 8 KB）</summary>
+      <div class="body">
+        <div class="row">
+          <input type="file" id="file" onchange="App.pickFile(this)">
+          <button class="primary" id="btnSendFile" onclick="App.sendFile()" disabled>发送文件</button>
+        </div>
+        <div class="hint" id="fileSendInfo">8 KB 大约需要 6–8 分钟，中途别切后台。</div>
+        <div class="prog"><i id="fileSendProg"></i></div>
+      </div>
+    </details>
 
     <div class="card">
       <h3>日志</h3>
@@ -301,12 +305,13 @@
   </section>
 </main>
 
+
 <footer>
-  纯本地：声音只在空气里走，不经过网络。 版本 v2026-11-25l（回执锁 18.1k/24ms · 回执自检 · 电脑 21.2k 上限提示）返回 <a href="./index.html">首页</a> ·
+  纯本地：声音只在空气里走，不经过网络。 版本 v2026-11-25m（UI 简化 · 双端实时 Hz · 收齐回执 · 电脑收自动避开 22.3k）返回 <a href="./index.html">首页</a> ·
   双工控制通道见 <a href="./duplex.html">duplex</a>
 </footer>
 
-<script src="ultra-core.js?v=20261125l"></script>
+<script src="ultra-core.js?v=20261125m"></script>
 <script>
 var App = (function () {
   var band = Ultra.BANDS[0];       // 默认 18.1k 实测 18k 听不见
@@ -316,6 +321,17 @@ var App = (function () {
    * 为什么不用「跟数据同一档」：电脑麦克风实测最高只到约 21.2k，22.3k 那一档在电脑端根本进不来；
    * 18.1k 是两端都验过能收的那一档，回执这种「一句话定生死」的东西必须走最稳的链路。 */
   var ACK_BAND = 'mid', ACK_SP = 24, ACK_COPIES = 2, ACK_EVERY_MS = 2400;
+  /* 对端设备：电脑麦克风上限约 21.2k，22.3k 那档在电脑上等于聋。开着「电脑收」时，发端
+   * 自动把 22.3k 从可用档里摘掉（自动轮流只轮 18.1k/20.5k），否则那一轮永远补不回来。 */
+  var peerIsPC = false, ackDoneSent = 0;
+  function allowedBands() {
+    return peerIsPC ? Ultra.BANDS.filter(function (b) { return b.key !== 'top'; }) : Ultra.BANDS;
+  }
+  function txBandAt(i) {
+    if (!autoBand) return (peerIsPC && band.key === 'top') ? Ultra.bandByKey('hi') : band;
+    var l = allowedBands();
+    return l[((i % l.length) + l.length) % l.length];
+  }
   var ackReplyOn = true;           // 接收端：缺包时自动回执
   var waitAckOn = true;            // 发送端：等回执再补包
   var lastPktAt = 0, lastAckAt = 0, ackRound = 0;
@@ -359,18 +375,21 @@ var App = (function () {
     row.innerHTML = '';
     var ab = document.createElement('button');
     ab.className = 'pill' + (autoBand ? ' on' : '');
-    ab.textContent = '自动 · 三档轮流';
+    ab.textContent = '自动';
     ab.onclick = function () { App.pickBand('auto'); };
     row.appendChild(ab);
     Ultra.BANDS.forEach(function (b) {
       var btn = document.createElement('button');
-      btn.className = 'pill' + (!autoBand && b.key === band.key ? ' on' : '');
-      btn.textContent = b.name + ' · ' + b.label;
+      var off = peerIsPC && b.key === 'top';
+      btn.className = 'pill' + (!autoBand && b.key === band.key && !off ? ' on' : '');
+      btn.textContent = b.name + (off ? '（电脑收不到）' : '');
+      btn.disabled = off;
+      btn.style.opacity = off ? '0.45' : '';
       btn.onclick = function () { App.pickBand(b.key); };
       row.appendChild(btn);
     });
     $('bandNote').textContent = autoBand
-      ? '自动：每发一遍换一档频带，三档轮流铺，接收端哪个档解出就是哪个档能过（慢 3 倍，但不用猜）'
+      ? (peerIsPC ? '自动：18.1k → 20.5k 轮流铺（电脑收，22.3k 已停用）' : '自动：18.1k → 20.5k → 22.3k 轮流铺')
       : band.desc;
     buildMeters();
   }
@@ -411,7 +430,22 @@ var App = (function () {
     if (!textState.total) return;
     var miss = [];
     for (var i = 0; i < textState.total; i++) if (!textState.parts[i]) miss.push(i);
-    if (!miss.length) return;
+    /* 收齐也要回一次「全部收到」：发端是靠回执才停的，收齐若不吭声，发端会一直重发。 */
+    if (!miss.length) {
+      if (ackDoneSent) return;
+      ackDoneSent = 1;
+      var okPkt = Ultra.buildPacket(Ultra.ackPayload(++ackRound, textState.total,
+        function () { return true; }));
+      var ob = Ultra.bandByKey(ACK_BAND), on = 0, oc = ACK_COPIES + 1;
+      log('已收齐 ' + textState.total + '/' + textState.total + '：回一次「全部收到」· ' +
+        ob.name + '/' + ACK_SP + 'ms ×' + oc, '#0a5f4f');
+      (function oneOk() {
+        if (on >= oc) return;
+        on++;
+        tx.send(okPkt, ob, ACK_SP, function () { setTimeout(oneOk, 200); });
+      })();
+      return;
+    }
     var now = performance.now();
     if (lastPktAt && now - lastPktAt > 20000) return;   // 对方早就收工了，别自己一直播
     if (now - lastAckAt < ACK_EVERY_MS) return;
@@ -664,7 +698,7 @@ var App = (function () {
     if (p.type === 'text') {
       // 同一段文字再发一次时要「续收」而不是清空重来：缺哪包补哪包，
       // 这就是没有反向信道时的手动 ARQ —— 再点一次发送，缺的几包通常就补上了。
-      if (p.seq === 0 && textState.total !== p.total) { textState = { total: p.total, parts: {} }; lastAckAt = 0; }
+      if (p.seq === 0 && textState.total !== p.total) { textState = { total: p.total, parts: {} }; lastAckAt = 0; ackDoneSent = 0; }
       if (!textState.total) textState = { total: p.total, parts: {} };
       textState.parts[p.seq] = p.data;
       lastPktAt = performance.now();
@@ -724,14 +758,16 @@ var App = (function () {
     });
 
     tickN++;
-    if (tickN % 6 === 0) {                     // 约每 0.5 秒量一次峰值频率
-      var pk = Ultra.peakFreq(slice, sr, 16000, 23800, 60);
+    if (tickN % 2 === 0) {                     // 约每 0.17 秒刷一次，肉眼就是「实时」
+      var pk = Ultra.peakFreq(slice, sr, 16000, 23800, 80);
       var el = $('dPeak');
       if (el) {
-        var strong = pk.v > 0 && pk.v * 1000 > (Ultra.bandEnergy(slice, sr, Ultra.BANDS[0]).mean + 1e-9);
-        el.textContent = pk.f ? (pk.f + ' Hz') : '—';
-        el.style.color = pk.f >= 18000 ? '#0a5f4f' : (pk.f ? '#c0392b' : '');
+        el.textContent = pk.f ? pk.f : '安静';
+        el.style.fontSize = pk.f ? '38px' : '22px';
+        el.style.color = pk.f >= 17500 ? 'var(--accent-2)' : (pk.f ? '#c0392b' : 'var(--muted)');
       }
+      var lv = $('rxNow');
+      if (lv) lv.textContent = pk.f ? ('听到 ' + (pk.f >= 17500 ? '超声' : '低频杂音')) : '很安静';
       updateDbg();
     }
     maybeAck();
@@ -782,12 +818,26 @@ var App = (function () {
     var buf = new Float32Array(n);
     outAnalyser.getFloatTimeDomainData(buf);
     var sr = ctx ? ctx.sampleRate : 48000;
-    var pk = Ultra.peakFreq(buf, sr, 16000, 22200, 60);
+    var pk = Ultra.peakFreq(buf, sr, 16000, 24000, 80);
     var el = $('sOut');
     if (el) {
-      el.textContent = pk.v > 1e-6 ? (pk.f + ' Hz') : '（静音）';
-      el.style.color = pk.f >= 18000 ? '#0a5f4f' : (pk.v > 1e-6 ? '#c0392b' : '');
+      el.textContent = pk.v > 1e-6 ? pk.f : '静音';
+      el.style.fontSize = pk.v > 1e-6 ? '38px' : '22px';
+      el.style.color = pk.f >= 17500 ? 'var(--accent-2)' : (pk.v > 1e-6 ? '#c0392b' : 'var(--muted)');
     }
+  }
+
+  /* 发送档位提示：把「这轮用的是哪一档、中心多少赫」写在 Hz 下面，省得猜 */
+  function markTx(b, live) {
+    var t = $('txTag');
+    if (t && b) t.textContent = (live ? '正在发 · ' : '档位 · ') + b.name + '（' + b.f0 + ' Hz 起）';
+    var r = $('txRate');
+    if (r) r.textContent = symMs + 'ms/符号 · 每包 ' + chunkBytes + 'B · ' + (autoBand ? '三档轮流' : '单档');
+  }
+
+  function markTxIdle() {
+    var t = $('txTag');
+    if (t) t.textContent = '未在发送';
   }
 
   /* ---------- 发送 ---------- */
@@ -896,8 +946,9 @@ var App = (function () {
         if (!alive()) return;
         if (j >= list.length) { setTimeout(after, 200); return; }
         var idx = list[j++];
-        var b = autoBand ? Ultra.BANDS[(round - 1 + idx) % Ultra.BANDS.length] : band;
+        var b = txBandAt(round - 1 + idx);
         onProgress && onProgress(idx, packets.length, round);
+        markTx(b, true);
         tx.send(Ultra.buildPacket(packets[idx]), b, symMs, function () { setTimeout(one, 150); });
       })();
     }
@@ -959,7 +1010,8 @@ var App = (function () {
         var pkt = packets[i]; i++;
         sent++;
         onProgress && onProgress(sent, total);
-        var b = autoBand ? Ultra.BANDS[bandIdx++ % Ultra.BANDS.length] : band;
+        var b = txBandAt(bandIdx++);
+        markTx(b, true);
         tx.send(Ultra.buildPacket(pkt), b, symMs, function () { setTimeout(one, 160); });
       }
       one();
@@ -970,13 +1022,14 @@ var App = (function () {
   function dispatch(packets, onProgress, onDone) {
     if (sending) { log('上一次发送还没结束（点「立即硬停」可中断）', '#b4791f'); return; }
     sending = true;
-    var wrap = function (ok) { sending = false; if (onDone) onDone(ok); };
+    var wrap = function (ok) { sending = false; markTxIdle(); if (onDone) onDone(ok); };
     if (waitAckOn) sendReliable(packets, onProgress, wrap);
-    else queuePackets(packets, onProgress, function () { sending = false; if (onDone) onDone(); });
+    else queuePackets(packets, onProgress, function () { sending = false; markTxIdle(); if (onDone) onDone(); });
   }
 
   return {
     dbgRows: buildDbgRows,
+    buildUI: function () { buildBandRow(); markTx(band); },
     role: function (r) {
       $('panelRx').className = r === 'rx' ? '' : 'hide';
       $('panelTx').className = r === 'tx' ? '' : 'hide';
@@ -990,20 +1043,40 @@ var App = (function () {
         autoBand = true;
         buildBandRow();
         log('发送频段：自动（每遍换一档，18.1k→20.5k→22.3k 轮流）');
+        markTx(band);
         return;
       }
       autoBand = false;
+      if (peerIsPC && key === 'top') {
+        log('对端是电脑：22.3k 在这台电脑上听不见，已自动切到 20.5k', '#b4791f');
+        key = 'hi';
+      }
       band = Ultra.bandByKey(key);
       buildBandRow();
       log('发送频段切到 ' + band.name);
+      markTx(band);
     },
 
-    speed: function (v) {
-      symMs = v;
+    peer: function (v) {
+      peerIsPC = (v === 'pc');
+      Array.prototype.forEach.call(document.querySelectorAll('[data-peer]'), function (b) {
+        b.className = 'pill' + (b.dataset.peer === v ? ' on' : '');
+      });
+      var nt = $('peerNote');
+      if (nt) nt.textContent = peerIsPC
+        ? '已按「电脑收」：22.3k 档自动停用，只轮 18.1k / 20.5k。'
+        : '手机麦克风能到 22.3k+，三档都能用。';
+      log(peerIsPC ? '对端按电脑处理：22.3k 档自动停用' : '对端按手机处理：三档可用');
+      buildBandRow();
+      markTx(band);
+    },
+
+    speed: function (v) {      symMs = v;
       Array.prototype.forEach.call(document.querySelectorAll('[data-sp]'), function (b) {
         b.className = 'pill' + (parseInt(b.dataset.sp, 10) === v ? ' on' : '');
       });
       $('speedNote').textContent = '当前：' + v + 'ms/符号 ≈ ' + (1000 / v * 3 / 3 | 0) + ' B/s（含帧头开销约打七折）';
+      markTx(band);
     },
 
     repeat: function (v) {
@@ -1022,6 +1095,7 @@ var App = (function () {
       $('chunkNote').textContent = '每包 ' + v + ' 字节 ≈ ' + symMs + 'ms 下 ' + secs +
         ' 秒一包。包越短越抗中途失步，中文（一个字 3 字节）尤其要短。';
       log('每包载荷 ' + v + ' 字节（约 ' + secs + ' 秒/包）');
+      markTx(band);
     },
 
     waitAck: function (on) {
@@ -1059,6 +1133,7 @@ var App = (function () {
         clearTimeout(loopTimer);
         loopTimer = null;
         if (tx) tx.stop();                       // 硬停：连正在放的那一段也掐掉
+        markTxIdle();
         btn.textContent = '循环发校准包';
         $('loopCnt').textContent = '已停（共发 ' + loopN + ' 次）';
         log('循环校准包已停，共 ' + loopN + ' 次');
@@ -1093,6 +1168,7 @@ var App = (function () {
       ackDead = false;           // 下次发送重新试一次麦
       ackClose();
       if (tx) tx.stop();
+      markTxIdle();
       $('btnLoop').textContent = '循环发校准包';
       $('btnProbe').disabled = false;
       $('btnSend').disabled = false;
@@ -1370,6 +1446,7 @@ var App = (function () {
       ensureCtx();
       $('btnProbe').disabled = true;
       log('发探测音 ' + band.name + ' · 1.2s');
+      markTx(band);
       tx.probe(band, 1200, function () {
         $('btnProbe').disabled = false;
         log('探测音结束');
@@ -1460,27 +1537,7 @@ App.chunk(16);
       if ($('calOut')) $('calOut').value = '（沿用上次校正）' + (saved.band || '') + '/' + (saved.sp || '') + 'ms ×' + saved.scale.toFixed(4);
     }
   } catch (e) {}
-  var row = document.getElementById('bandRow');
-  var ab = document.createElement('button');
-  ab.className = 'pill';
-  ab.textContent = '自动 · 三档轮流';
-  ab.onclick = function () { App.pickBand('auto'); };
-  row.appendChild(ab);
-  Ultra.BANDS.forEach(function (b) {
-    var btn = document.createElement('button');
-    btn.className = 'pill' + (b.key === 'mid' ? ' on' : '');
-    btn.textContent = b.name + ' · ' + b.label;
-    btn.onclick = function () { App.pickBand(b.key); };
-    row.appendChild(btn);
-  });
-  document.getElementById('bandNote').textContent = Ultra.BANDS[0].desc;
-  var m = document.getElementById('meters');
-  Ultra.BANDS.forEach(function (b) {
-    var d = document.createElement('div');
-    d.className = 'meter';
-    d.innerHTML = '<span class="nm">' + b.name + '</span><span class="bar"><i id="bar-' + b.key + '"></i></span><span class="vl" id="val-' + b.key + '">-</span>';
-    m.appendChild(d);
-  });
+  App.buildUI();          // 频段按钮 + 能量条都由这一处统一生成，避免两套 UI 各写一遍
   var f = document.getElementById('txt');
   f.addEventListener('input', function () {
     var n = f.value.length;
