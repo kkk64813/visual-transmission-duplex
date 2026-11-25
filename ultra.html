@@ -118,6 +118,7 @@
         <div>采样率 <b id="dSr">—</b> · 麦克风原始 <b id="dMic">—</b></div>
         <div>此刻最强音 <b id="dPeak">—</b> <span class="hint" style="margin:0">（每 0.5 秒量一次，看它到底落在几千赫）</span></div>
         <div>缓冲 <b id="dBuf">—</b> · 扫描位置 <b id="dScan">—</b></div>
+        <div>收样 <b id="dDrop">—</b> <span class="hint" style="margin:0">（低于 100% 说明手机 CPU 跟不上、麦克风在丢样，符号会整体被压缩）</span></div>
       </div>
       <div id="dDec" class="dbg" style="margin-top:8px"></div>
       <div class="row" style="margin-top:10px;align-items:center">
@@ -265,16 +266,16 @@
 </main>
 
 <footer>
-  纯本地：声音只在空气里走，不经过网络。 版本 v2026-11-25e（一键校正）返回 <a href="./index.html">首页</a> ·
+  纯本地：声音只在空气里走，不经过网络。 版本 v2026-11-25f（全符号滑音 · 丢样表 · 循环可停）返回 <a href="./index.html">首页</a> ·
   双工控制通道见 <a href="./duplex.html">duplex</a>
 </footer>
 
-<script src="ultra-core.js?v=20261125e"></script>
+<script src="ultra-core.js?v=20261125f"></script>
 <script>
 var App = (function () {
   var band = Ultra.BANDS[0];       // 默认 18.1k 实测 18k 听不见
   var autoBand = false;            // 自动档：每发一遍换一档，三档轮流铺
-  var loopTimer = null, loopN = 0; // 循环发校准包
+  var loopTimer = null, loopN = 0, loopOn = false; // 循环发校准包
   var symMs = 16, repeats = 2;
   var ctx = null, tx = null;
   var micStream = null, proc = null;
@@ -620,6 +621,7 @@ var App = (function () {
   }
 
   var tickN = 0, lastChunk = null;
+  var rxTotal = 0, rxT0 = 0, dropWarned = false;
 
   function meterTick(chunk) {
     lastChunk = chunk;
@@ -787,10 +789,12 @@ var App = (function () {
 
     /* 想让人耳听不到，唯一有效的旋钮是「幅度」：失真随幅度按平方/立方掉。
      * 代价是能量少了，用更长的符号补回来。 */
-    /* 循环发同一个短包，给对端的「一键自动校正」当靶子用；再点一次停。 */
+    /* 循环发同一个短包，给对端的「一键自动校正」当靶子用；再点一次停。
+     * 停止必须用标志位：tx.send 的回调会在停止之后才触发，只看 timer 会被它重新续上。 */
     loopCal: function () {
       var btn = $('btnLoop');
-      if (loopTimer) {
+      if (loopOn) {
+        loopOn = false;
         clearTimeout(loopTimer);
         loopTimer = null;
         btn.textContent = '循环发校准包';
@@ -799,20 +803,22 @@ var App = (function () {
         return;
       }
       ensureCtx();
+      loopOn = true;
       loopN = 0;
       btn.textContent = '停止循环（正在发…）';
       var pkt = Ultra.buildPacket(Ultra.chunkText('CAL', 8)[0]);
       var idx = 0;
       function step() {
-        if (!loopTimer) return;
+        if (!loopOn) return;
         var b = autoBand ? Ultra.BANDS[idx++ % Ultra.BANDS.length] : band;
         loopN++;
         $('loopCnt').textContent = '已发 ' + loopN + ' 次 · ' + b.name + '/' + symMs + 'ms';
         tx.send(pkt, b, symMs, function () {
+          if (!loopOn) return;                    // 停止之后不再续
           loopTimer = setTimeout(step, 200);
         });
       }
-      loopTimer = setTimeout(step, 0);   // 用 setTimeout 让「停止」能打断
+      step();
       log('开始循环发校准包：' + (autoBand ? '自动三档轮流' : band.name) + ' · ' + symMs + 'ms');
     },
 
@@ -918,11 +924,25 @@ var App = (function () {
         proc.onaudioprocess = function (ev) {
           var chunk = new Float32Array(ev.inputBuffer.getChannelData(0));
           for (var i = 0; i < decoders.length; i++) if (!decoders[i].muted) decoders[i].push(chunk);
+          rxTotal += chunk.length;
+          if (!rxT0) rxT0 = performance.now();
+          var el2 = (performance.now() - rxT0) / 1000;
+          if (el2 > 1) {
+            var ratio = rxTotal / (ctx.sampleRate * el2);
+            var el = document.getElementById('dDrop');
+            if (el) el.textContent = (ratio * 100).toFixed(1) + '%';
+            if (ratio < 0.97 && !dropWarned) {
+              dropWarned = true;
+              log('麦克风在丢样（收样只有 ' + (ratio * 100).toFixed(0) + '%）：手机 CPU 跟不上，符号长度会被压缩，'
+                + '先停掉别的页面/应用，或把「解码速度」只留一档再试', '#c0392b');
+            }
+          }
           meterTick(chunk);
         };
         src.connect(proc);
         proc.connect(ctx.destination);
         running = true;
+        rxTotal = 0; rxT0 = 0; dropWarned = false;
         $('btnMic').disabled = true;
         $('btnStop').disabled = false;
         $('stSr').textContent = ctx.sampleRate + ' Hz';

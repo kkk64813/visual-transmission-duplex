@@ -135,9 +135,9 @@ var GAIN = 0.72;          // 默认标准音量：够响，又不至于让喇叭
     var prevW = step * toneFreq(band, syms[0]);
     for (var s = 0; s < syms.length; s++) {
       var tw = step * toneFreq(band, syms[s]);
-      // 同步头保持硬跳频（解码要靠它估频率偏移，不能被滑音糊掉），
-      // 载荷符号才用滑音 —— 载荷符号占绝大多数，可听的「嗒嗒」声主要来自它们。
-      var gl = (s >= SYNC.length + 1) ? glide : 0;
+      // 所有符号一律等幅滑音：硬跳频在波形上留折角，会溅出人耳能听见的宽带“嗒嗒”声。
+      // 解码端判决窗只取符号尾部（跳过 GUARD_MS），滑音段本来就不参与判决，所以不影响同步估计。
+      var gl = Math.min(glide, Math.round(symLen / 4));
       for (var n = 0; n < symLen; n++) {
         var w = tw;
         if (gl && n < gl) { var t = n / gl; w = prevW + (tw - prevW) * t; }
