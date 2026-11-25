@@ -34,7 +34,8 @@ var GAIN = 0.72;          // 默认标准音量：够响，又不至于让喇叭
    *  hi  20.5–21.9 kHz：最安静，但不少设备在这段压根没响应，只当兜底。 */
   var BANDS = [
     { key: 'mid', name: '18.1k', f0: 18100, df: 200, label: '推荐', desc: '人耳听阈之上，且手机扬声器、笔记本麦克风在这段响应最好，日常就用这档' },
-    { key: 'hi', name: '20.5k', f0: 20500, df: 200, label: '最静', desc: '几乎不可能听到，但不少设备在这段没有响应，作为兜底' }
+    { key: 'hi', name: '20.5k', f0: 20500, df: 200, label: '更静', desc: '喇叭响应明显下降，溅射更小；解不出就往下一档试' },
+    { key: 'top', name: '22.3k', f0: 22300, df: 200, label: '最静', desc: '22.3–23.7k：绝大多数喇叭这段几乎没输出，人耳最安静，但很多设备收不到' }
   ];
 
   function bandByKey(k) {
@@ -356,6 +357,8 @@ var GAIN = 0.72;          // 默认标准音量：够响，又不至于让喇叭
       this.syncAbs = a2;
       this.totalSyms = SYNC.length + 3 * (2 + needLen + 2);
       this.scanAbs = a2;
+      this.lastHits = ver;
+      this._diag('lock', 'needLen=' + needLen + ' ver=' + ver);
       this._decodePacket();
       return;
     }
@@ -414,6 +417,23 @@ var GAIN = 0.72;          // 默认标准音量：够响，又不至于让喇叭
     return best;
   };
 
+  /* 诊断输出：把每次「锁上 / CRC 失败 / 收到包」摊平成一行文本，页面直接落日志，
+   * 出问题时把这份日志整段拷出来就能定位（不用靠猜）。 */
+  StreamDecoder.prototype._diag = function (type, extra) {
+    if (!this.onDiag) return;
+    this.onDiag({
+      t: type,
+      band: this.band && this.band.name,
+      sym: this.symMs,
+      hits: this.lastHits,
+      scale: this.fScale,
+      margin: this.lastMargin,
+      minMargin: this.lastMinMargin,
+      drift: this.lastDrift,
+      info: extra || ''
+    });
+  };
+
   StreamDecoder.prototype._decodePacket = function () {
     var symLen = this.symLen;
     var base = this.syncAbs - this.abs0;
@@ -440,10 +460,12 @@ var GAIN = 0.72;          // 默认标准音量：够响，又不至于让喇叭
 
     var syncOk = true, hits = 0;
     for (var j = 0; j < SYNC.length; j++) if (syms[j] === SYNC[j]) hits++;
+    this.lastHits = hits;
     if (hits < SYNC.length - 2) syncOk = false;
     if (!syncOk) {
       this.errors++;
       this.stat.sync++;
+      this._diag('sync', 'hits=' + hits + '/8 包内复检不过');
       if (this.onError) this.onError('sync', this.lastMargin);
       this.syncAbs = -1;
       this.scanAbs = Math.max(this.scanAbs, base + this.abs0 + 1);
@@ -454,10 +476,13 @@ var GAIN = 0.72;          // 默认标准音量：够响，又不至于让喇叭
     if (!payload) {
       this.errors++;
       this.stat.crc++;
+      this._diag('crc', 'len=' + (body[0] | (body[1] << 8)) + ' crc=' + (body[2] | (body[3] << 8)) +
+        ' sym0..3=' + syms[SYNC.length] + ',' + syms[SYNC.length + 1] + ',' + syms[SYNC.length + 2] + ',' + syms[SYNC.length + 3]);
       if (this.onError) this.onError('crc', this.lastMargin);
     } else {
       this.packets++;
       this.stat.pk++;
+      this._diag('ok', 'type=' + payload[0] + ' seq=' + payload[1] + '/' + payload[2] + ' n=' + payload.length);
       if (this.onPacket) this.onPacket(payload, this.lastMargin);
     }
     this.syncAbs = -1;

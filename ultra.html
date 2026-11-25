@@ -76,7 +76,7 @@
 
 <header>
   <div class="mark"></div>
-  <div class="brand">超声信道<small>UltraLink · 18.1k / 20.5k</small></div>
+  <div class="brand">超声信道<small>UltraLink · 18.1k / 20.5k / 22.3k</small></div>
   <div class="grow"></div>
   <div class="dot" id="dot"></div>
   <span style="font-size:12px;color:var(--muted)" id="stateTxt">未启动</span>
@@ -103,7 +103,7 @@
         <span>CRC 失败 <b id="stCrc">0</b></span>
         <span>采样 <b id="stSr">—</b></span>
       </div>
-      <div class="hint">电脑或手机任一端开这里，另一端去「发送端」。两档频带同时在解，不用手动对齐。</div>
+      <div class="hint">电脑或手机任一端开这里，另一端去「发送端」。三档频带同时在解，不用手动对齐。</div>
     </div>
 
     <div class="card">
@@ -134,6 +134,18 @@
         CRC 大量失败但同步有 → 音节对齐/时钟漂移，把符号调到 24ms 再试。
         最后一列「边距」是判决把握，低于 6 dB 基本就是噪声在乱点了。
       </div>
+    </div>
+
+    <div class="card">
+      <h3>诊断日志（把这段贴出来就能定位）</h3>
+      <div class="hint" style="margin-top:0">每次「锁上 / 包内复检不过 / CRC 失败 / 收到包」都记一行：档位、符号长度、同步命中、估出的缩放、边距、漂移、长度字段。出问题时点「下载 txt」发过来。</div>
+      <div class="row" style="margin-top:8px">
+        <button class="pill" onclick="App.diagClear()">清空日志</button>
+        <button class="pill" onclick="App.diagCopy()">复制</button>
+        <button class="pill" onclick="App.diagDownload()">下载 txt</button>
+        <span class="hint" id="diagCnt" style="margin:0">0 行</span>
+      </div>
+      <div class="out hide" id="diagBox" style="font-size:11px;line-height:1.5;max-height:220px;overflow:auto;white-space:pre">（空）</div>
     </div>
 
     <div class="card">
@@ -307,6 +319,7 @@ var App = (function () {
         d.onError = function (kind) {
           if (kind === 'crc') { inc('stCrc'); } else { inc('stSync'); }
         };
+        d.onDiag = diagPush;
         decoders.push(d);
       });
     });
@@ -315,6 +328,46 @@ var App = (function () {
   function inc(id) {
     var e = $(id);
     e.textContent = (parseInt(e.textContent, 10) || 0) + 1;
+  }
+
+  /* ---------- 诊断日志（环形缓冲 200 行，可复制/下载） ---------- */
+  var DIAG_MAX = 200, diagLines = [];
+
+  function diagPush(ev) {
+    var d = new Date();
+    var ts = ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2) + ':' +
+             ('0' + d.getSeconds()).slice(-2) + '.' + ('00' + d.getMilliseconds()).slice(-3);
+    var line = ts + ' ' + pad(ev.band, 6) + '/' + pad(ev.sym, 2) + 'ms ' + pad(ev.t, 4).toUpperCase() +
+      ' 命中=' + (ev.hits == null ? '-' : ev.hits) + '/8' +
+      ' 缩放=' + (ev.scale ? ev.scale.toFixed(4) : '-') +
+      ' 边距=' + (ev.margin ? ev.margin.toFixed(1) : '-') + 'dB' +
+      ' 最低=' + (ev.minMargin && ev.minMargin < 99 ? ev.minMargin.toFixed(1) : '-') + 'dB' +
+      ' 漂移=' + (ev.drift ? ev.drift.toFixed(1) : '-') + ' ' + (ev.info || '');
+    diagLines.push(line);
+    if (diagLines.length > DIAG_MAX) diagLines.shift();
+    var box = $('diagBox'), cnt = $('diagCnt');
+    if (box) {
+      box.className = 'out';
+      box.textContent = diagLines.join('\n');
+      box.scrollTop = box.scrollHeight;
+    }
+    if (cnt) cnt.textContent = diagLines.length + ' 行';
+  }
+
+  function pad(v, n) {
+    v = v == null ? '' : String(v);
+    while (v.length < n) v += ' ';
+    return v;
+  }
+
+  function diagText() {
+    var head = [
+      '# UltraLink 诊断日志 ' + new Date().toString(),
+      '# 采样率=' + (ctx ? ctx.sampleRate : '?') + ' 频带=' + band.name + ' 符号=' + symMs + 'ms 重复=' + repeats +
+        ' 音量=' + (Ultra.getGain ? Ultra.getGain() : '?'),
+      '# 列：时间 档位/符号 事件 同步命中 缩放 边距 最低边距 漂移 备注'
+    ];
+    return head.concat(diagLines).join('\n') + '\n';
   }
 
   function onPacket(payload, b, sp) {
@@ -377,7 +430,7 @@ var App = (function () {
 
     tickN++;
     if (tickN % 6 === 0) {                     // 约每 0.5 秒量一次峰值频率
-      var pk = Ultra.peakFreq(slice, sr, 16000, 22200, 60);
+      var pk = Ultra.peakFreq(slice, sr, 16000, 23800, 60);
       var el = $('dPeak');
       if (el) {
         var strong = pk.v > 0 && pk.v * 1000 > (Ultra.bandEnergy(slice, sr, Ultra.BANDS[0]).mean + 1e-9);
@@ -523,6 +576,32 @@ var App = (function () {
       this.speed(32);
       this.repeat(3);
       log('静音优先：音量 0.35 + 32ms + 每包 3 遍（慢，但最不吵）');
+    },
+
+    diagClear: function () {
+      diagLines = [];
+      var box = $('diagBox');
+      if (box) { box.textContent = '（空）'; box.className = 'out hide'; }
+      $('diagCnt').textContent = '0 行';
+    },
+
+    diagCopy: function () {
+      var s = diagText();
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(s).then(function () { log('诊断日志已复制 ' + diagLines.length + ' 行'); },
+          function () { log('复制被拒绝，改用「下载 txt」'); });
+      } else { log('这浏览器不支持剪贴板，请用「下载 txt」'); }
+    },
+
+    diagDownload: function () {
+      var s = diagText();
+      var blob = new Blob([s], { type: 'text/plain;charset=utf-8' });
+      var a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'ultra-diag-' + new Date().toISOString().slice(0, 19).replace(/[:T]/g, '') + '.txt';
+      a.click();
+      setTimeout(function () { URL.revokeObjectURL(a.href); }, 2000);
+      log('诊断日志已下载 ' + diagLines.length + ' 行');
     },
 
     calib: function (permille) {
