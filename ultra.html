@@ -224,6 +224,7 @@
         <span class="hint" style="margin:0;flex:none">可靠发送</span>
         <button class="pill on" data-wa="1" onclick="App.waitAck(true)">等对方回执补包</button>
         <button class="pill" data-wa="0" onclick="App.waitAck(false)">不等（盲发）</button>
+        <button class="pill" onclick="App.testMic()">测回执麦克风</button>
       </div>
       <div class="hint" style="margin-top:6px">「等对方回执」时会自动开麦收对方的数字回执：对方收齐就停，缺哪包只补哪包，最多来回 6 轮。</div>
       <div class="row" style="margin-top:8px">
@@ -293,11 +294,11 @@
 </main>
 
 <footer>
-  纯本地：声音只在空气里走，不经过网络。 版本 v2026-11-25j（防重复解码 · 回执不再等静默 · 硬停 · 自听录音）返回 <a href="./index.html">首页</a> ·
+  纯本地：声音只在空气里走，不经过网络。 版本 v2026-11-25k（防重复解码 · 回执一次开麦 · 测麦 · 自听录音）返回 <a href="./index.html">首页</a> ·
   双工控制通道见 <a href="./duplex.html">duplex</a>
 </footer>
 
-<script src="ultra-core.js?v=20261125j"></script>
+<script src="ultra-core.js?v=20261125k"></script>
 <script>
 var App = (function () {
   var band = Ultra.BANDS[0];       // 默认 18.1k 实测 18k 听不见
@@ -789,27 +790,33 @@ var App = (function () {
   /* ---------- 可靠发送：发一轮 → 开麦收回执 → 只补缺的包 ---------- */
   var sendSeq = 0, sending = false;
 
-  function ackListen(ms, done) {
-    var got = null;
-    var stopAll2 = function () {
-      try { if (ackProc) ackProc.disconnect(); } catch (e) {}
-      try { if (ackSrc) ackSrc.disconnect(); } catch (e) {}
-      if (ackMic) { ackMic.getTracks().forEach(function (t) { t.stop(); }); ackMic = null; }
-      ackProc = null; ackSrc = null; ackBusy = false;
-    };
-    if (ackMic) {                       // 上一次的麦还没放，先关掉：否则同一设备打不开（NotReadableError）
-      stopAll2();
+  /* ---- 回执麦克风：一次发送只开一次麦 ---- 
+   * 每轮开一次麦在安卓上很容易吃 NotReadableError（上一次的 track 还没彻底释放），
+   * 真机日志里就是连着好几轮「开麦失败」然后把 6 轮额度空烧完。 */
+  var ackGot = null;
+
+  function ackClose() {
+    try { if (ackProc) ackProc.disconnect(); } catch (e) {}
+    try { if (ackSrc) ackSrc.disconnect(); } catch (e) {}
+    if (ackMic) { try { ackMic.getTracks().forEach(function (t) { t.stop(); }); } catch (e) {} ackMic = null; }
+    ackProc = null; ackSrc = null; ackDec = null; ackBusy = false;
+  }
+
+  function ackOpen() {
+    if (ackMic && ackMic.getTracks().every(function (t) { return t.readyState === 'live'; })) {
+      return Promise.resolve(ackMic);
     }
+    ackClose();
     ackBusy = true;
-    Ultra.openMic().then(function (stream) {
-      ackMic = stream;
+    return Ultra.openMic().then(function (stream) {
       ensureCtx();
-      /* 三档都开一个 16ms 解码器：对方用哪一档回执都能收到（自动轮流模式下尤其必要） */
+      ackMic = stream;
+      /* 三档各挂一个 16ms 解码器：对方用哪一档回执都能收到（自动轮流模式下尤其必要） */
       var ds = Ultra.BANDS.map(function (b) {
         var d = new Ultra.StreamDecoder(ctx.sampleRate, b, 16);
         d.onPacket = function (p) {
           var pl = Ultra.parsePayload(p);
-          if (pl && pl.type === 'ack') got = pl;
+          if (pl && pl.type === 'ack') ackGot = pl;
         };
         return d;
       });
@@ -822,11 +829,22 @@ var App = (function () {
       ackSrc = ctx.createMediaStreamSource(stream);
       ackSrc.connect(ackProc);
       ackProc.connect(ctx.destination);
-      setTimeout(function () { stopAll2(); done(got); }, ms);
-    }).catch(function (e) {
-      log('开麦失败（无法收回执）：' + e + '。多半是麦克风被别的标签页/应用占着 —— 关掉它们，或改成「不等（盲发）」', '#c0392b');
       ackBusy = false;
-      ackDead = true;              // 这次会话就别再反复开麦、反复空转了
+      return stream;
+    }).catch(function (e) {
+      ackBusy = false;
+      ackDead = true;
+      throw e;
+    });
+  }
+
+  function ackListen(ms, done) {
+    ackGot = null;
+    ackOpen().then(function () {
+      setTimeout(function () { done(ackGot); }, ms);
+    }).catch(function (e) {
+      log('开麦失败（无法收回执）：' + (e && e.name ? e.name : e) +
+        '。麦克风被别的应用/标签页占着，或系统没给权限 —— 关掉它们再试，或改成「不等（盲发）」', '#c0392b');
       done(null);
     });
   }
@@ -850,26 +868,23 @@ var App = (function () {
       })();
     }
 
+    function finish(ok, why) {
+      sending = false;
+      ackClose();                       // 收工就放麦，别把麦克风一直占着
+      if (why) log(why, ok ? '#0a5f4f' : '#b4791f');
+      if (onDone) onDone(ok);
+    }
     function loop() {
       if (!alive()) return;
-      if (!pending.length) { sending = false; log('对方已确认收齐（' + round + ' 轮）', '#0a5f4f'); if (onDone) onDone(true); return; }
-      if (round > MAX_ROUNDS) {
-        sending = false;
-        log('回执补包到上限，还剩 ' + pending.length + ' 包未确认', '#b4791f');
-        if (onDone) onDone(false);
-        return;
-      }
+      if (!pending.length) { finish(true, '对方已确认收齐（' + round + ' 轮）'); return; }
+      if (round > MAX_ROUNDS) { finish(false, '回执补包到上限，还剩 ' + pending.length + ' 包未确认'); return; }
       if (ackDead || !waitAckOn) {
         // 没有回执通道：剩下的按轮发铺 repeats 遍，别在这里空耗 6 轮
         log('没有回执通道，改成盲发：剩下的包铺 ' + repeats + ' 遍', '#b4791f');
         var list = pending.slice(), rp = 0;
         (function blindPass() {
           if (!alive()) return;
-          if (rp >= repeats) {
-            sending = false;
-            if (onDone) onDone(false);
-            return;
-          }
+          if (rp >= repeats) { finish(false); return; }
           rp++;
           transmit(list, function () { setTimeout(blindPass, 200); });
         })();
@@ -885,7 +900,7 @@ var App = (function () {
           var miss = ack.missing();
           log('收到回执 #' + ack.round + '：对方已收 ' + (ack.total - miss.length) + '/' + ack.total +
             (miss.length ? '，缺 ' + miss.map(function (x) { return x + 1; }).join('、') : '，已齐'), '#0a5f4f');
-          if (!miss.length) { sending = false; if (onDone) onDone(true); return; }
+          if (!miss.length) { finish(true); return; }
           pending = miss;
           round++;
           loop();
@@ -1042,13 +1057,26 @@ var App = (function () {
       sendSeq++;                 // 作废所有在跑的发送链
       sending = false;
       ackDead = false;           // 下次发送重新试一次麦
-      if (ackMic) { ackMic.getTracks().forEach(function (t) { t.stop(); }); ackMic = null; }
+      ackClose();
       if (tx) tx.stop();
       $('btnLoop').textContent = '循环发校准包';
       $('btnProbe').disabled = false;
       $('btnSend').disabled = false;
       $('btnSendFile').disabled = false;
       log('已硬停：所有正在发送的声音都掐断了');
+    },
+
+    /* 发端要开麦收回执，麦克风能不能开直接决定 ARQ 有没有用。先测一下再发，省得白等 4.5 秒 ×6 轮。 */
+    testMic: function () {
+      Ultra.openMic().then(function (s) {
+        s.getTracks().forEach(function (t) { t.stop(); });
+        ackDead = false;
+        log('回执麦克风可用：ARQ 通道没问题', '#0a5f4f');
+      }).catch(function (e) {
+        ackDead = true;
+        log('回执麦克风打不开：' + (e && e.name ? e.name : e) +
+          ' → 先关掉别的占用麦克风的应用/标签页，或改用「不等（盲发）」', '#c0392b');
+      });
     },
 
     /* 自听：一边发探测音，一边用本机麦克风收自己，分别量「可听带 0–16k」和「超声带 17.8k+」的峰值。
