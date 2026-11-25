@@ -175,6 +175,12 @@
         <button class="pill" data-ar="0" onclick="App.ackReply(false)">不回执</button>
       </div>
       <div class="hint" style="margin-top:0">开着这个，收端在缺包时会自己用 18.1k 播一段 7 字节位图（约 1.3 秒），告诉发端哪些包没到；发端只会补那几包，不用整段重发。</div>
+      <div class="row" style="margin-top:8px">
+        <button onclick="App.loopAck(true)">循环发回执（自检）</button>
+        <button onclick="App.loopAck(false)">停</button>
+        <span class="hint" id="ackLoopCnt" style="margin:0">没在循环</span>
+      </div>
+      <div class="hint" style="margin-top:6px">自检用：这边一直播回执包，让对方点「回执自检（听 8 秒）」。能把「对方没发」和「发了收不到」分开。</div>
       <div class="out" id="outText">（空）</div>
       <div id="fileBox" class="hide" style="margin-top:10px">
         <div class="hint" id="fileInfo"></div>
@@ -199,6 +205,7 @@
       <h3>频段</h3>
       <div class="row" id="bandRow"></div>
       <div class="hint" id="bandNote"></div>
+      <div class="hint" style="color:#b4791f">实测：电脑麦克风上限约 21.2k，收不到 22.3k 那一档。所以「电脑当接收端」时只用 18.1k / 20.5k，别开 22.3k，也别用「自动轮流」（它会白白浪费 1/3 的轮次）。</div>
       <div class="row" style="margin-top:10px">
         <button id="btnProbe" onclick="App.probe()">发探测音（1.2 秒）</button>
         <button onclick="App.selfListen()">自听录音（2 秒）</button>
@@ -225,6 +232,7 @@
         <button class="pill on" data-wa="1" onclick="App.waitAck(true)">等对方回执补包</button>
         <button class="pill" data-wa="0" onclick="App.waitAck(false)">不等（盲发）</button>
         <button class="pill" onclick="App.testMic()">测回执麦克风</button>
+        <button class="pill" onclick="App.testAck()">回执自检（听 8 秒）</button>
       </div>
       <div class="hint" style="margin-top:6px">「等对方回执」时会自动开麦收对方的数字回执：对方收齐就停，缺哪包只补哪包，最多来回 6 轮。</div>
       <div class="row" style="margin-top:8px">
@@ -294,19 +302,20 @@
 </main>
 
 <footer>
-  纯本地：声音只在空气里走，不经过网络。 版本 v2026-11-25k（防重复解码 · 回执一次开麦 · 测麦 · 自听录音）返回 <a href="./index.html">首页</a> ·
+  纯本地：声音只在空气里走，不经过网络。 版本 v2026-11-25l（回执锁 18.1k/24ms · 回执自检 · 电脑 21.2k 上限提示）返回 <a href="./index.html">首页</a> ·
   双工控制通道见 <a href="./duplex.html">duplex</a>
 </footer>
 
-<script src="ultra-core.js?v=20261125k"></script>
+<script src="ultra-core.js?v=20261125l"></script>
 <script>
 var App = (function () {
   var band = Ultra.BANDS[0];       // 默认 18.1k 实测 18k 听不见
   var autoBand = false;            // 自动档：每发一遍换一档，三档轮流铺
   var chunkBytes = 16;             // 每包载荷字节：实测真机单包 >2.5 秒几乎必挂，16B@24ms ≈1.7 秒最稳
-  /* 回执用的频带：跟着「最后一包是从哪档解出来的」走，这样反向链路和正向用同一档，
-   * 呼吸/遮挡条件一致，成功率高得多。没收到过包就退回 18.1k。 */
-  var ackBandKey = 'mid';
+  /* 回执用固定的一组参数：18.1k + 24ms + 连发 2 遍。
+   * 为什么不用「跟数据同一档」：电脑麦克风实测最高只到约 21.2k，22.3k 那一档在电脑端根本进不来；
+   * 18.1k 是两端都验过能收的那一档，回执这种「一句话定生死」的东西必须走最稳的链路。 */
+  var ACK_BAND = 'mid', ACK_SP = 24, ACK_COPIES = 2, ACK_EVERY_MS = 2400;
   var ackReplyOn = true;           // 接收端：缺包时自动回执
   var waitAckOn = true;            // 发送端：等回执再补包
   var lastPktAt = 0, lastAckAt = 0, ackRound = 0;
@@ -398,26 +407,38 @@ var App = (function () {
    * 以前用「静默 0.9 秒」当触发条件，一旦解码器反复吐同一个包，lastPktAt 永远在刷新，
    * 回执就永远发不出去 —— 发端收到的是「一包都没确认」。这里改成纯节流，不再依赖静默。 */
   function maybeAck() {
-    if (!ackReplyOn || !textState.total || !tx || !ctx) return;
+    if (!ackReplyOn || !tx || !ctx) return;
+    if (!textState.total) return;
     var miss = [];
     for (var i = 0; i < textState.total; i++) if (!textState.parts[i]) miss.push(i);
     if (!miss.length) return;
     var now = performance.now();
     if (lastPktAt && now - lastPktAt > 20000) return;   // 对方早就收工了，别自己一直播
-    if (now - lastAckAt < 2200) return;
+    if (now - lastAckAt < ACK_EVERY_MS) return;
     lastAckAt = now;
     if (ackRound > 200) ackRound = 0;
     ackRound++;
     var payload = Ultra.ackPayload(ackRound, textState.total, function (k) { return !!textState.parts[k]; });
     var pkt = Ultra.buildPacket(payload);
-    var b = Ultra.bandByKey(ackBandKey), n = 0;
+    var b = Ultra.bandByKey(ACK_BAND), n = 0;
     log('回执 #' + ackRound + '：已收 ' + (textState.total - miss.length) + '/' + textState.total +
-      '，缺第 ' + miss.map(function (x) { return x + 1; }).join('、') + ' 包');
+      '，缺第 ' + miss.map(function (x) { return x + 1; }).join('、') + ' 包 · ' + b.name + '/' + ACK_SP + 'ms ×' + ACK_COPIES);
     (function one() {
       if (n >= ACK_COPIES) return;
       n++;
-      tx.send(pkt, b, ACK_SP, function () { setTimeout(one, 260); });
+      tx.send(pkt, b, ACK_SP, function () { setTimeout(one, 200); });
     })();
+  }
+
+  /* ---------- 回执自检（两端都能单独验这条反向链路） ---------- */
+  var ackLoopTimer = null, ackLoopAt = 0;
+  function ackLoopTick() {
+    if (!ackLoopTimer) return;
+    var now = performance.now();
+    if (now - ackLoopAt < 1500) return;
+    ackLoopAt = now;
+    var pkt = Ultra.buildPacket(Ultra.ackPayload(1, 1, function () { return false; }));
+    tx.send(pkt, Ultra.bandByKey(ACK_BAND), ACK_SP, function () {});
   }
 
   /* ---------- 一键自动校正 ----------
@@ -793,7 +814,7 @@ var App = (function () {
   /* ---- 回执麦克风：一次发送只开一次麦 ---- 
    * 每轮开一次麦在安卓上很容易吃 NotReadableError（上一次的 track 还没彻底释放），
    * 真机日志里就是连着好几轮「开麦失败」然后把 6 轮额度空烧完。 */
-  var ackGot = null;
+  var ackGot = null, ackStat = null;
 
   function ackClose() {
     try { if (ackProc) ackProc.disconnect(); } catch (e) {}
@@ -811,20 +832,24 @@ var App = (function () {
     return Ultra.openMic().then(function (stream) {
       ensureCtx();
       ackMic = stream;
-      /* 三档各挂一个 16ms 解码器：对方用哪一档回执都能收到（自动轮流模式下尤其必要） */
-      var ds = Ultra.BANDS.map(function (b) {
-        var d = new Ultra.StreamDecoder(ctx.sampleRate, b, 16);
-        d.onPacket = function (p) {
-          var pl = Ultra.parsePayload(p);
-          if (pl && pl.type === 'ack') ackGot = pl;
-        };
-        return d;
-      });
-      ackDec = ds;
+      /* 只挂 18.1k / 24ms 一个解码器：回执固定走这一档（电脑麦克风上限约 21.2k，22.3k 收不到）。
+       * 解码器同时把所有「同步/CRC」计数留在 stat 里，监听结束时原样报出来 —— 这样
+       * 「对方根本没发声」和「发了但我解不出」一眼能分开。 */
+      var d = new Ultra.StreamDecoder(ctx.sampleRate, Ultra.bandByKey(ACK_BAND), ACK_SP);
+      var maxHits = 0;
+      d.onPacket = function (p) {
+        var pl = Ultra.parsePayload(p);
+        if (pl && pl.type === 'ack') ackGot = pl;
+      };
+      d.onError = function (kind) { if (kind === 'sync' && d.lastHits > maxHits) maxHits = d.lastHits; };
+      ackDec = [d];
       ackProc = ctx.createScriptProcessor(4096, 1, 1);
       ackProc.onaudioprocess = function (ev) {
         var c = new Float32Array(ev.inputBuffer.getChannelData(0));
-        for (var i = 0; i < ds.length; i++) ds[i].push(c);
+        for (var i = 0; i < ackDec.length; i++) ackDec[i].push(c);
+      };
+      ackStat = function () {
+        return { sync: d.stat.sync, crc: d.stat.crc, pk: d.stat.pk, maxHits: maxHits, hits: d.lastHits };
       };
       ackSrc = ctx.createMediaStreamSource(stream);
       ackSrc.connect(ackProc);
@@ -841,7 +866,16 @@ var App = (function () {
   function ackListen(ms, done) {
     ackGot = null;
     ackOpen().then(function () {
-      setTimeout(function () { done(ackGot); }, ms);
+      setTimeout(function () {
+        var st = ackStat ? ackStat() : null;
+        if (!ackGot && st) {
+          log('回执监听结果：一个都没解出｜同步失败 ' + st.sync + ' 次、CRC 失败 ' + st.crc +
+            ' 次、最好同步命中 ' + st.maxHits + '/8、解出 ' + st.pk + ' 个' +
+            (st.maxHits >= 5 ? '（听到影子但解不开：多半是频率偏移，让对端也做一次自动校正）'
+              : '（几乎什么都没听到：对端没回执、或音量太小/距离太远/回执麦被占）'), '#b4791f');
+        }
+        done(ackGot);
+      }, ms);
     }).catch(function (e) {
       log('开麦失败（无法收回执）：' + (e && e.name ? e.name : e) +
         '。麦克风被别的应用/标签页占着，或系统没给权限 —— 关掉它们再试，或改成「不等（盲发）」', '#c0392b');
@@ -893,8 +927,8 @@ var App = (function () {
       log('第 ' + round + ' 轮发送 ' + pending.length + ' 包' + (round > 1 ? '（补缺）' : ''));
       transmit(pending, function () {
         if (!alive()) return;
-        log('等待对方回执…（约 4.5 秒）');
-        ackListen(4500, function (ack) {
+        log('等待对方回执…（约 6 秒）');
+        ackListen(6000, function (ack) {
           if (!alive()) return;
           if (!ack) { log('没收到回执：这一轮当作全部失败，重发全部', '#b4791f'); round++; loop(); return; }
           var miss = ack.missing();
@@ -1076,6 +1110,43 @@ var App = (function () {
         ackDead = true;
         log('回执麦克风打不开：' + (e && e.name ? e.name : e) +
           ' → 先关掉别的占用麦克风的应用/标签页，或改用「不等（盲发）」', '#c0392b');
+      });
+    },
+
+    /* 回执自检：接收端这边一直循环播一个回执包，让发端去听。
+     * 这条链路单独验，不用先发数据，省得把「回执没通」和「数据没通」混在一起。 */
+    loopAck: function (on) {
+      ensureCtx();
+      if (ackLoopTimer) { clearInterval(ackLoopTimer); ackLoopTimer = null; }
+      if (on === false) return;
+      ackLoopAt = 0;
+      ackLoopTick();
+      ackLoopTimer = setInterval(ackLoopTick, 500);
+      $('ackLoopCnt').textContent = '正在循环发回执 · 18.1k/24ms · 每 1.5 秒一次';
+      log('开始循环发回执测试包（' + Ultra.bandByKey(ACK_BAND).name + '/' + ACK_SP + 'ms）');
+    },
+
+    /* 发端的回执自检：只听 8 秒，然后把「同步命中/CRC/解出」三个数原样报出来 */
+    testAck: function () {
+      ensureCtx();
+      ackDead = false;
+      log('回执自检：开始听 8 秒（' + Ultra.bandByKey(ACK_BAND).name + '/' + ACK_SP + 'ms）');
+      ackGot = null;
+      ackOpen().then(function () {
+        setTimeout(function () {
+          var st = ackStat ? ackStat() : null;
+          if (ackGot) {
+            log('✓ 收到回执：解出 ' + ackGot.total + ' 包位图，缺 ' + ackGot.missing().length + ' 包', '#0a5f4f');
+          } else {
+            log('✗ 没收到回执｜同步失败 ' + (st ? st.sync : '?') + '、CRC 失败 ' + (st ? st.crc : '?') +
+              '、最好同步命中 ' + (st ? st.maxHits : '?') + '/8', '#c0392b');
+            log('判读：同步命中 0 → 那边压根没在发（或音量太小/太远）；命中 5–7 但 CRC 挂 → 频率偏了；两者都有 → 回执链路本身可用，问题在时序',
+              '#b4791f');
+          }
+          ackClose();
+        }, 8000);
+      }).catch(function (e) {
+        log('开麦失败：' + (e && e.name ? e.name : e), '#c0392b');
       });
     },
 
