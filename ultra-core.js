@@ -347,6 +347,9 @@ var GAIN = 0.72;          // 默认标准音量：够响，又不至于让喇叭
     if (this.syncAbs >= 0) {
       var needEnd = this.syncAbs + this.totalSyms * symLen;
       if (needEnd - this.abs0 <= this.fill) { this._decodePacket(); return; }
+      /* 数据还没到齐：先把锁放下、继续扫后面的位置。
+       * 回声条件下「先锁上的位置」常常是个差半格的位置，锁住等它反而永远等不到，
+       * 放下重扫才能抓住真正对齐的那一份。 */
       if (needEnd > this.abs0 + this.fill + 2 * symLen) { this.syncAbs = -1; }
       else return;
     }
@@ -528,7 +531,7 @@ var GAIN = 0.72;          // 默认标准音量：够响，又不至于让喇叭
       this._diag('sync', 'hits=' + hits + '/8 包内复检不过');
       if (this.onError) this.onError('sync', this.lastMargin);
       this.syncAbs = -1;
-      this.scanAbs = Math.max(this.scanAbs, base + this.abs0 + 1);
+      this.scanAbs = Math.max(this.scanAbs, base + this.abs0 + symLen);
       return;
     }
     var body = symbolsToBytes(syms.subarray(SYNC.length));
@@ -539,15 +542,21 @@ var GAIN = 0.72;          // 默认标准音量：够响，又不至于让喇叭
       this._diag('crc', 'len=' + (body[0] | (body[1] << 8)) + ' crc=' + (body[2] | (body[3] << 8)) +
         ' sym0..3=' + syms[SYNC.length] + ',' + syms[SYNC.length + 1] + ',' + syms[SYNC.length + 2] + ',' + syms[SYNC.length + 3]);
       if (this.onError) this.onError('crc', this.lastMargin);
-    } else {
-      this.packets++;
-      this.stat.pk++;
-      this._diag('ok', 'type=' + payload[0] + ' seq=' + payload[1] + '/' + payload[2] + ' n=' + payload.length);
-      if (this.onPacket) this.onPacket(payload, this.lastMargin);
+      // 失败只往后挪一个符号：回声里「差一点对齐」的位置常常是下一个才对得上的，整包跳过会把机会丢掉
+      this.syncAbs = -1;
+      this.scanAbs = Math.max(this.scanAbs, base + this.abs0 + symLen);
+      return;
     }
+    this.packets++;
+    this.stat.pk++;
+    this._diag('ok', 'type=' + payload[0] + ' seq=' + payload[1] + '/' + payload[2] + ' n=' + payload.length);
+    if (this.onPacket) this.onPacket(payload, this.lastMargin);
     this.syncAbs = -1;
-    // 失败时只跳过同步头，不跳过整包 —— 发送端每包都会重发，后面那几遍还能捞回来
-    this.scanAbs = Math.max(this.scanAbs, base + this.abs0 + (SYNC.length + 1) * symLen);
+    /* 解成功的包，整段跳过。
+     * 以前只跳同步头，结果同一个包会顺着扫描被反复「重新锁上、重新解出」：
+     * 真机日志里就是同一个包连着 100 多条 OK、后面几包一个都进不来，
+     * 接收端因此永远处于「在收包」状态，连回执都不发，发端只能一直重发。 */
+    this.scanAbs = Math.max(this.scanAbs, base + this.abs0 + this.totalSyms * symLen);
   };
 
   /* ---------------- 载荷类型与分块 ---------------- */
@@ -658,10 +667,13 @@ var GAIN = 0.72;          // 默认标准音量：够响，又不至于让喇叭
     self.busy = true;
     self._src = src;
     var done = function () {
+      if (fired) return;          // onended 和兜底 setTimeout 都会来，只能算一次
+      fired = true;
       self.busy = false;
       if (self._src === src) self._src = null;
       if (onDone) onDone();
     };
+    var fired = false;
     src.onended = done;
     src.start();
     var ms = samples.length / self.ctx.sampleRate * 1000 + 300;

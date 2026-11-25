@@ -293,11 +293,11 @@
 </main>
 
 <footer>
-  纯本地：声音只在空气里走，不经过网络。 版本 v2026-11-25i（双工回执 · 只补缺包 · 硬停 · 自听录音）返回 <a href="./index.html">首页</a> ·
+  纯本地：声音只在空气里走，不经过网络。 版本 v2026-11-25j（防重复解码 · 回执不再等静默 · 硬停 · 自听录音）返回 <a href="./index.html">首页</a> ·
   双工控制通道见 <a href="./duplex.html">duplex</a>
 </footer>
 
-<script src="ultra-core.js?v=20261125i"></script>
+<script src="ultra-core.js?v=20261125j"></script>
 <script>
 var App = (function () {
   var band = Ultra.BANDS[0];       // 默认 18.1k 实测 18k 听不见
@@ -309,7 +309,7 @@ var App = (function () {
   var ackReplyOn = true;           // 接收端：缺包时自动回执
   var waitAckOn = true;            // 发送端：等回执再补包
   var lastPktAt = 0, lastAckAt = 0, ackRound = 0;
-  var ackDec = null, ackProc = null, ackSrc = null, ackMic = null;
+  var ackDec = null, ackProc = null, ackSrc = null, ackMic = null, ackBusy = false, ackDead = false;
   var loopTimer = null, loopN = 0, loopOn = false; // 循环发校准包
   var symMs = 16, repeats = 2;
   var ctx = null, tx = null;
@@ -393,17 +393,17 @@ var App = (function () {
     });
   }
 
-  /* 接收端回执：缺包且链路安静下来（>0.9 秒没有新包）就发一次位图，每 2 秒重发一次，
-   * 直到收齐或用户按停止。发送端拿到位图只补缺的那几包。 */
+  /* 接收端回执：只要还有缺包、链路开着，就每 2.2 秒回一次位图，直到收齐。
+   * 以前用「静默 0.9 秒」当触发条件，一旦解码器反复吐同一个包，lastPktAt 永远在刷新，
+   * 回执就永远发不出去 —— 发端收到的是「一包都没确认」。这里改成纯节流，不再依赖静默。 */
   function maybeAck() {
     if (!ackReplyOn || !textState.total || !tx || !ctx) return;
     var miss = [];
     for (var i = 0; i < textState.total; i++) if (!textState.parts[i]) miss.push(i);
     if (!miss.length) return;
     var now = performance.now();
-    if (!lastPktAt || now - lastPktAt < 900) return;
-    if (now - lastPktAt > 15000) return;     // 对方早就不发了，别再自己一直播
-    if (now - lastAckAt < 2000) return;
+    if (lastPktAt && now - lastPktAt > 20000) return;   // 对方早就收工了，别自己一直播
+    if (now - lastAckAt < 2200) return;
     lastAckAt = now;
     if (ackRound > 200) ackRound = 0;
     ackRound++;
@@ -787,14 +787,20 @@ var App = (function () {
   }
 
   /* ---------- 可靠发送：发一轮 → 开麦收回执 → 只补缺的包 ---------- */
+  var sendSeq = 0, sending = false;
+
   function ackListen(ms, done) {
     var got = null;
-    var stopAll = function () {
+    var stopAll2 = function () {
       try { if (ackProc) ackProc.disconnect(); } catch (e) {}
       try { if (ackSrc) ackSrc.disconnect(); } catch (e) {}
       if (ackMic) { ackMic.getTracks().forEach(function (t) { t.stop(); }); ackMic = null; }
-      ackProc = null; ackSrc = null;
+      ackProc = null; ackSrc = null; ackBusy = false;
     };
+    if (ackMic) {                       // 上一次的麦还没放，先关掉：否则同一设备打不开（NotReadableError）
+      stopAll2();
+    }
+    ackBusy = true;
     Ultra.openMic().then(function (stream) {
       ackMic = stream;
       ensureCtx();
@@ -816,21 +822,26 @@ var App = (function () {
       ackSrc = ctx.createMediaStreamSource(stream);
       ackSrc.connect(ackProc);
       ackProc.connect(ctx.destination);
-      setTimeout(function () { stopAll(); done(got); }, ms);
+      setTimeout(function () { stopAll2(); done(got); }, ms);
     }).catch(function (e) {
-      log('开麦失败（无法收回执）：' + e, '#c0392b');
+      log('开麦失败（无法收回执）：' + e + '。多半是麦克风被别的标签页/应用占着 —— 关掉它们，或改成「不等（盲发）」', '#c0392b');
+      ackBusy = false;
+      ackDead = true;              // 这次会话就别再反复开麦、反复空转了
       done(null);
     });
   }
 
   function sendReliable(packets, onProgress, onDone) {
+    var tok = ++sendSeq;                 // 每次发送一个令牌：旧链的回调一律作废，不许再往下跑
     var round = 1, MAX_ROUNDS = 6;
     var pending = [];
     for (var i = 0; i < packets.length; i++) pending.push(i);
+    function alive() { return tok === sendSeq; }
 
     function transmit(list, after) {
       var j = 0;
       (function one() {
+        if (!alive()) return;
         if (j >= list.length) { setTimeout(after, 200); return; }
         var idx = list[j++];
         var b = autoBand ? Ultra.BANDS[(round - 1 + idx) % Ultra.BANDS.length] : band;
@@ -840,18 +851,41 @@ var App = (function () {
     }
 
     function loop() {
-      if (!pending.length) { log('对方已确认收齐（' + round + ' 轮）', '#0a5f4f'); if (onDone) onDone(true); return; }
-      if (round > MAX_ROUNDS) { log('回执补包到上限，还剩 ' + pending.length + ' 包未确认', '#b4791f'); if (onDone) onDone(false); return; }
+      if (!alive()) return;
+      if (!pending.length) { sending = false; log('对方已确认收齐（' + round + ' 轮）', '#0a5f4f'); if (onDone) onDone(true); return; }
+      if (round > MAX_ROUNDS) {
+        sending = false;
+        log('回执补包到上限，还剩 ' + pending.length + ' 包未确认', '#b4791f');
+        if (onDone) onDone(false);
+        return;
+      }
+      if (ackDead || !waitAckOn) {
+        // 没有回执通道：剩下的按轮发铺 repeats 遍，别在这里空耗 6 轮
+        log('没有回执通道，改成盲发：剩下的包铺 ' + repeats + ' 遍', '#b4791f');
+        var list = pending.slice(), rp = 0;
+        (function blindPass() {
+          if (!alive()) return;
+          if (rp >= repeats) {
+            sending = false;
+            if (onDone) onDone(false);
+            return;
+          }
+          rp++;
+          transmit(list, function () { setTimeout(blindPass, 200); });
+        })();
+        return;
+      }
       log('第 ' + round + ' 轮发送 ' + pending.length + ' 包' + (round > 1 ? '（补缺）' : ''));
       transmit(pending, function () {
-        if (!waitAckOn) { round++; loop(); return; }
+        if (!alive()) return;
         log('等待对方回执…（约 4.5 秒）');
         ackListen(4500, function (ack) {
+          if (!alive()) return;
           if (!ack) { log('没收到回执：这一轮当作全部失败，重发全部', '#b4791f'); round++; loop(); return; }
           var miss = ack.missing();
           log('收到回执 #' + ack.round + '：对方已收 ' + (ack.total - miss.length) + '/' + ack.total +
             (miss.length ? '，缺 ' + miss.map(function (x) { return x + 1; }).join('、') : '，已齐'), '#0a5f4f');
-          if (!miss.length) { if (onDone) onDone(true); return; }
+          if (!miss.length) { sending = false; if (onDone) onDone(true); return; }
           pending = miss;
           round++;
           loop();
@@ -885,8 +919,11 @@ var App = (function () {
   }
 
   function dispatch(packets, onProgress, onDone) {
-    if (waitAckOn) sendReliable(packets, onProgress, onDone);
-    else queuePackets(packets, onProgress, onDone);
+    if (sending) { log('上一次发送还没结束（点「立即硬停」可中断）', '#b4791f'); return; }
+    sending = true;
+    var wrap = function (ok) { sending = false; if (onDone) onDone(ok); };
+    if (waitAckOn) sendReliable(packets, onProgress, wrap);
+    else queuePackets(packets, onProgress, function () { sending = false; if (onDone) onDone(); });
   }
 
   return {
@@ -1002,7 +1039,10 @@ var App = (function () {
     stopAll: function () {
       loopOn = false;
       clearTimeout(loopTimer); loopTimer = null;
-      waitAckOn = false;
+      sendSeq++;                 // 作废所有在跑的发送链
+      sending = false;
+      ackDead = false;           // 下次发送重新试一次麦
+      if (ackMic) { ackMic.getTracks().forEach(function (t) { t.stop(); }); ackMic = null; }
       if (tx) tx.stop();
       $('btnLoop').textContent = '循环发校准包';
       $('btnProbe').disabled = false;
