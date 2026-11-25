@@ -656,12 +656,29 @@ var GAIN = 0.72;          // 默认标准音量：够响，又不至于让喇叭
     src.buffer = buf;
     src.connect(self.out || self.ctx.destination);
     self.busy = true;
-    var done = function () { self.busy = false; if (onDone) onDone(); };
+    self._src = src;
+    var done = function () {
+      self.busy = false;
+      if (self._src === src) self._src = null;
+      if (onDone) onDone();
+    };
     src.onended = done;
     src.start();
     var ms = samples.length / self.ctx.sampleRate * 1000 + 300;
     setTimeout(done, ms);
     return src;
+  };
+
+  /* 硬停：把正在放的那一段直接掐掉，不等它自然结束。
+   * 循环发/长包发送时用户按「停」，必须真的立刻没声音。 */
+  Tx.prototype.stop = function () {
+    if (this._src) {
+      try { this._src.onended = null; } catch (e) {}
+      try { this._src.stop(); } catch (e) {}
+      try { this._src.disconnect(); } catch (e) {}
+      this._src = null;
+    }
+    this.busy = false;
   };
 
   Tx.prototype.send = function (packet, band, symMs, onDone) {

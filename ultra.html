@@ -201,6 +201,7 @@
       <div class="hint" id="bandNote"></div>
       <div class="row" style="margin-top:10px">
         <button id="btnProbe" onclick="App.probe()">发探测音（1.2 秒）</button>
+        <button onclick="App.selfListen()">自听录音（2 秒）</button>
         <button onclick="App.calibrate()">先发校准（3 个短包）</button>
         <span class="hint" style="margin:0">先探测再发送，能省掉来回试。</span>
       </div>
@@ -227,6 +228,7 @@
       <div class="hint" style="margin-top:6px">「等对方回执」时会自动开麦收对方的数字回执：对方收齐就停，缺哪包只补哪包，最多来回 6 轮。</div>
       <div class="row" style="margin-top:8px">
         <button id="btnLoop" onclick="App.loopCal()">循环发校准包</button>
+        <button onclick="App.stopAll()" style="color:#c0392b">■ 立即硬停</button>
         <span class="hint" id="loopCnt" style="margin:0">点一次开始，再点一次停</span>
       </div>
       <div class="hint" style="margin-top:6px">对方点「一键自动校正」时用这个：会一直重复发同一个短包，直到你点停。</div>
@@ -291,11 +293,11 @@
 </main>
 
 <footer>
-  纯本地：声音只在空气里走，不经过网络。 版本 v2026-11-25h（双工回执 · 只补缺包 · 极静 22.3k）返回 <a href="./index.html">首页</a> ·
+  纯本地：声音只在空气里走，不经过网络。 版本 v2026-11-25i（双工回执 · 只补缺包 · 硬停 · 自听录音）返回 <a href="./index.html">首页</a> ·
   双工控制通道见 <a href="./duplex.html">duplex</a>
 </footer>
 
-<script src="ultra-core.js?v=20261125h"></script>
+<script src="ultra-core.js?v=20261125i"></script>
 <script>
 var App = (function () {
   var band = Ultra.BANDS[0];       // 默认 18.1k 实测 18k 听不见
@@ -970,6 +972,7 @@ var App = (function () {
         loopOn = false;
         clearTimeout(loopTimer);
         loopTimer = null;
+        if (tx) tx.stop();                       // 硬停：连正在放的那一段也掐掉
         btn.textContent = '循环发校准包';
         $('loopCnt').textContent = '已停（共发 ' + loopN + ' 次）';
         log('循环校准包已停，共 ' + loopN + ' 次');
@@ -993,6 +996,65 @@ var App = (function () {
       }
       step();
       log('开始循环发校准包：' + (autoBand ? '自动三档轮流' : band.name) + ' · ' + symMs + 'ms');
+    },
+
+    /* 一键硬停：循环、长包、探测音全部掐掉。用户按「停」就该立刻没声音。 */
+    stopAll: function () {
+      loopOn = false;
+      clearTimeout(loopTimer); loopTimer = null;
+      waitAckOn = false;
+      if (tx) tx.stop();
+      $('btnLoop').textContent = '循环发校准包';
+      $('btnProbe').disabled = false;
+      $('btnSend').disabled = false;
+      $('btnSendFile').disabled = false;
+      log('已硬停：所有正在发送的声音都掐断了');
+    },
+
+    /* 自听：一边发探测音，一边用本机麦克风收自己，分别量「可听带 0–16k」和「超声带 17.8k+」的峰值。
+     * 这样「到底有没有人耳能听到的成分」是数字，不是感觉。 */
+    selfListen: function () {
+      ensureCtx();
+      var self = this;
+      Ultra.openMic().then(function (stream) {
+        var an = ctx.createAnalyser();
+        an.fftSize = 8192;
+        an.smoothingTimeConstant = 0;
+        var src = ctx.createMediaStreamSource(stream);
+        src.connect(an);
+        var bins = new Float32Array(an.frequencyBinCount);
+        var bw = ctx.sampleRate / an.fftSize;
+        var peakAud = -200, peakUs = -200, floorAud = -200;
+        function scan() {
+          an.getFloatFrequencyData(bins);
+          for (var i = 0; i < bins.length; i++) {
+            var f = i * bw, v = bins[i];
+            if (f > 50 && f < 16000) { if (v > peakAud) peakAud = v; }
+            else if (f > 17800 && f < 24000) { if (v > peakUs) peakUs = v; }
+          }
+        }
+        var iv = setInterval(scan, 40);
+        setTimeout(function () {                 // 先量 0.6 秒底噪
+          floorAud = peakAud; peakAud = -200; peakUs = -200;
+          log('自听：底噪量完（可听带最高 ' + floorAud.toFixed(1) + ' dB），开始发探测音…');
+          tx.probe(band, 1400, function () {});
+        }, 600);
+        setTimeout(function () {
+          clearInterval(iv);
+          try { src.disconnect(); } catch (e) {}
+          stream.getTracks().forEach(function (t) { t.stop(); });
+          var rise = peakAud - floorAud;
+          var msg = '自听结果：超声带 ' + band.name + ' 峰值 ' + peakUs.toFixed(1) + ' dB；' +
+            '可听带(0–16k) 峰值 ' + peakAud.toFixed(1) + ' dB，比底噪高 ' + rise.toFixed(1) + ' dB';
+          log(msg, rise > 6 ? '#b4791f' : '#0a5f4f');
+          log(rise > 6
+            ? '→ 确实有可听成分：多半是扬声器非线性/瞬态，先把音量降到 0.35 再测，或换 22.3k 档'
+            : '→ 可听带几乎没抬起来：说明发出去的基本是纯超声，你听到的可能是从扬声器/功放漏出的杂音，或机械振动',
+            rise > 6 ? '#b4791f' : '#0a5f4f');
+        }, 2600);
+      }).catch(function (e) {
+        log('自听失败（开不了麦克风）：' + e, '#c0392b');
+      });
     },
 
     quietPreset: function () {
