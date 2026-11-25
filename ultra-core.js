@@ -300,6 +300,142 @@ var GAIN = 0.72;          // 默认标准音量：够响，又不至于让喇叭
     }
     return best;
   }
+  /* ---------------- 一次性频率测量（自动校准的核心） ----------------
+   * 旧办法是「猜 scale、盲扫 17 格、每格等 1.2 秒看能不能解出」——既慢又要人按。
+   * 这里改成直接量：把音频降采样到 sr/10（8 个音的 200 Hz 间距仍然分得开），
+   * 在 ±5% 内扫 scale，对 8 个音的「在音能量 / 半音距处能量」求和，取总能量最大的那个。
+   * 一次遍历就给出绝对 scale，耗时几十毫秒，不需要用户点任何东西。 */
+  function measureScale(x, sr, band, lo, hi, step) {
+    band = band || BANDS[0];
+    lo = lo || 0.97; hi = hi || 1.03; step = step || 0.001;
+    var D = 10, fmix = band.f0 - 100;         // 混到 100–1500 Hz 的低频平坦区
+    var n = Math.min(x.length, Math.round(sr * 1.0));
+    n -= n % D;
+    if (n < Math.round(sr * 0.08)) return null;
+    var off = x.length - n;
+    var m = n / D, srd = sr / D;
+    var xd = new Float32Array(m);
+    var wmix = TWO_PI * fmix / sr;
+    for (var i = 0; i < m; i++) {
+      var a = 0, base = off + i * D;
+      for (var k = 0; k < D; k++) a += x[base + k] * Math.cos(wmix * (base + k));
+      xd[i] = a / D;
+    }
+    /* 加汉宁窗：24ms 一个音，不加窗时频谱是 sinc，边带能到 −13 dB，
+     * 拿 ±30 Hz 去积分会让「错 half 个音距」的 scale 也吃到边带而虚高（实测会锁 0.989）。
+     * 加窗后边带压到 −31 dB 以下，音位才干净。 */
+    for (var w = 0; w < m; w++) xd[w] *= 0.5 - 0.5 * Math.cos(TWO_PI * w / (m - 1 || 1));
+    /* 一次性算整段频谱。然后用「谱峰间距」直接推 scale：
+     * 8 个音的间距恒为 band.df（200 Hz），量出峰与峰的间隔就等于量出了频率缩放，
+     * 和「哪个音被发得多」无关 —— 数据包里音分布不均也不会把结果带偏（拿能量求和就会被带偏）。 */
+    var df2 = 2, fLo = 40, fHi = band.df * (TONES - 1) + 700;
+    var nb = Math.floor((fHi - fLo) / df2) + 1;
+    var S = new Float64Array(nb);
+    for (var b = 0; b < nb; b++) S[b] = goertzel(xd, 0, m, fLo + b * df2, srd);
+    var smax = 0;
+    for (var bi = 0; bi < nb; bi++) if (S[bi] > smax) smax = S[bi];
+    if (!(smax > 0)) return null;
+
+    /* 找谱峰：局部极大 + 高于最大值 15%，再做抛物线插值到亚 bin 精度 */
+    var peaks = [];
+    for (var p = 2; p < nb - 2; p++) {
+      if (S[p] < smax * 0.06) continue;
+      if (!(S[p] >= S[p - 1] && S[p] >= S[p + 1])) continue;
+      var ym = S[p - 1], y0 = S[p], yp = S[p + 1];
+      var den = (ym - 2 * y0 + yp), dd = den ? (ym - yp) / (2 * den) : 0;
+      if (dd > 1) dd = 1;
+      if (dd < -1) dd = -1;
+      peaks.push({ f: fLo + (p + dd) * df2, e: y0 });
+    }
+    peaks.sort(function (a, b) { return a.f - b.f; });
+    /* 合并过近的峰：60 Hz 内只留最强的 */
+    var merged = [];
+    for (var q = 0; q < peaks.length; q++) {
+      var last = merged[merged.length - 1];
+      if (last && peaks[q].f - last.f < 60) {
+        if (peaks[q].e > last.e) { last.f = peaks[q].f; last.e = peaks[q].e; }
+      } else merged.push({ f: peaks[q].f, e: peaks[q].e });
+    }
+    if (merged.length < 4) return null;
+
+    /* 相邻峰间距做聚类：真正的音距是大多数间距所在的那一簇（漏掉一个音会出现 2 倍间距，自然被排除） */
+    var diffs = [];
+    for (var q2 = 1; q2 < merged.length; q2++) diffs.push(merged[q2].f - merged[q2 - 1].f);
+    var bestC = null;
+    for (var c1 = 0; c1 < diffs.length; c1++) {
+      var group = [];
+      for (var c2 = 0; c2 < diffs.length; c2++) {
+        if (Math.abs(diffs[c2] - diffs[c1]) <= diffs[c1] * 0.25) group.push(diffs[c2]);
+      }
+      if (!bestC || group.length > bestC.length) bestC = group;
+    }
+    if (!bestC || bestC.length < 2) return null;
+    var spacing = 0;
+    for (var g = 0; g < bestC.length; g++) spacing += bestC[g];
+    spacing /= bestC.length;
+
+    var scale = spacing / band.df;
+    if (!(scale > lo * 0.9 && scale < hi * 1.1)) return null;
+
+    /* 用峰间距定出 scale 后，再在 ±0.4% 内用「音周围积分能量」微调一次（把边带影响压到最小） */
+    function near(f, halfW) {
+      var i0 = Math.floor((f - halfW - fLo) / df2), i1 = Math.ceil((f + halfW - fLo) / df2);
+      var e = 0;
+      for (var k2 = Math.max(0, i0); k2 <= Math.min(nb - 1, i1); k2++) e += S[k2];
+      return e;
+    }
+    function comb(s) {
+      var on = 0, off = 0;
+      for (var t = 0; t < TONES; t++) {
+        var fo = (band.f0 + t * band.df) * s - fmix;
+        on += near(fo, 16);
+        off += near(fo + band.df * 0.5, 16);
+      }
+      return { on: on, off: off, ratio: on / (off + 1e-9) };
+    }
+    var bestS = scale;
+    for (var s2 = scale - 0.004; s2 <= scale + 0.0041; s2 += 0.0004) {
+      if (comb(s2).ratio > comb(bestS).ratio) bestS = s2;
+    }
+    var cb = comb(bestS);
+    return { scale: bestS, on: cb.on, off: cb.off, ratio: cb.ratio, spacing: spacing, peaks: merged.length };
+  }
+
+  /* 发送前的「标尺音」：把 8 个同步音按 SYNC 顺序播几遍。
+   * 收端只要听到这段，就能用 measureScale 一次量出本链路的频率缩放。
+   * 每轮 8 音 × 24ms = 192ms，5 轮约 0.96 秒。 */
+  function makeRuler(sr, band, symMs, rounds) {
+    sr = sr || SR; band = band || BANDS[0];
+    symMs = symMs || 24; rounds = Math.max(2, rounds || 5);
+    var symLen = Math.round(sr * symMs / 1000);
+    var total = SYNC.length * rounds * symLen;
+    var x = new Float32Array(total);
+    var step = TWO_PI / sr, phase = 0, p = 0;
+    var glide = Math.max(1, Math.round(sr * GLIDE_MS / 1000));
+    var prevW = step * toneFreq(band, SYNC[0]);
+    for (var r = 0; r < rounds; r++) {
+      for (var i = 0; i < SYNC.length; i++) {
+        var tw = step * toneFreq(band, SYNC[i]);
+        var gl = Math.min(glide, Math.round(symLen / 4));
+        for (var n = 0; n < symLen; n++) {
+          var w = tw;
+          if (gl && n < gl) { var u = n / gl; w = prevW + (tw - prevW) * u; }
+          x[p++] = Math.sin(phase) * GAIN;
+          phase += w;
+          if (phase > TWO_PI) phase -= TWO_PI;
+        }
+        prevW = tw;
+      }
+    }
+    var ramp = Math.max(1, Math.round(sr * RAMP_MS / 1000));
+    for (var j = 0; j < ramp && j < total; j++) {
+      var g = j / ramp;
+      x[j] *= g;
+      x[total - 1 - j] *= g;
+    }
+    return x;
+  }
+
   /* ---------------- 流式解码器（每档频带 × 每种符号长度各跑一个） ---------------- */
   function StreamDecoder(sampleRate, band, symMs) {
     this.sr = sampleRate || SR;
@@ -473,6 +609,52 @@ var GAIN = 0.72;          // 默认标准音量：够响，又不至于让喇叭
     this.fScale = best;
     if (!FORCED_SCALE) SHARED_SCALE = best;
     return best;
+  };
+
+  /* 在窗口里找「对得最齐的一处同步头」命中几个音（8 个音为一组，按 1/4 符号步长滑） */
+  StreamDecoder.prototype._syncHitsInWindow = function (winStart, winLen, scale) {
+    var symLen = this.symLen, span = SYNC.length * symLen, best = 0;
+    var step = Math.max(1, Math.round(symLen / 4));
+    for (var o = 0; o + span <= winLen; o += step) {
+      var h = this._hitCount(winStart + o, symLen, scale);
+      if (h > best) best = h;
+      if (best >= SYNC.length) break;
+    }
+    return best;
+  };
+
+  /* 自动校准：不需要用户点按钮，也不需要盲扫等 20 秒。
+   * 两步走：
+   *  1) measureScale 从频谱粗测一个 scale（一次遍历，几十毫秒）；
+   *  2) 在粗测值附近 ±3% 用「同步头真命中数」逐格验 —— 命中数才是硬指标，
+   *     谁的 scale 能把 8 个同步音对上 5 个以上，谁就是对的。命中数不够就不改，
+   *     绝不用噪声去「校」出一个越校越偏的偏移。 */
+  StreamDecoder.prototype.autoCalibrate = function (msLen) {
+    var need = Math.round(this.sr * (msLen || 420) / 1000);
+    if (this.fill < need + 32) return null;
+    var ws = this.fill - need;
+    var now = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+    var r = measureScale(this.buf.subarray(ws, this.fill), this.sr, this.band, 0.97, 1.03, 0.001);
+    var seed = r ? r.scale : this.fScale;
+    var best = { hits: 0, scale: seed };
+    for (var k = -15; k <= 15; k++) {
+      var s = seed + k * 0.002;
+      if (s < 0.94 || s > 1.06) continue;
+      var h = this._syncHitsInWindow(ws, need, s);
+      if (h > best.hits || (h === best.hits && Math.abs(s - this.fScale) < Math.abs(best.scale - this.fScale))) {
+        best = { hits: h, scale: s };
+      }
+      if (h >= SYNC.length) break;
+    }
+    var ok = best.hits >= 6 && (!r || r.ratio >= 2);
+    if (ok) {
+      var changed = Math.abs(best.scale - this.fScale) > 2e-4;
+      this.fScale = best.scale;
+      if (!FORCED_SCALE) SHARED_SCALE = best.scale;
+      if (changed) this.syncAbs = -1;              // 缩放大改后，原来锁的位置作废，重扫
+    }
+    this.lastCal = { scale: this.fScale, ok: ok, hits: best.hits, measured: seed, ratio: r ? r.ratio : 0, at: now };
+    return this.lastCal;
   };
 
   /* 诊断输出：把每次「锁上 / CRC 失败 / 收到包」摊平成一行文本，页面直接落日志，
@@ -698,6 +880,22 @@ var GAIN = 0.72;          // 默认标准音量：够响，又不至于让喇叭
     return this.play(wave, onDone);
   };
 
+  /* 每次发送前自动校准：先播一段标尺音（8 个同步音轮流几遍），紧接着才是数据。
+   * 收端只要听到标尺，就能在一段音频里量出本链路的频率缩放 —— 不用人点「校正」。 */
+  Tx.prototype.sendCal = function (packet, band, symMs, rounds, onDone) {
+    var sr = this.ctx.sampleRate;
+    var ruler = makeRuler(sr, band, symMs, rounds || 5);
+    var wave = makeWaveform(packet, sr, band, symMs);
+    var all = new Float32Array(ruler.length + wave.length);
+    all.set(ruler, 0);
+    all.set(wave, ruler.length);
+    return this.play(all, onDone);
+  };
+
+  Tx.prototype.ruler = function (band, symMs, rounds) {
+    return makeRuler(this.ctx.sampleRate, band, symMs, rounds || 5);
+  };
+
   Tx.prototype.probe = function (band, ms, onDone) {
     return this.play(makeProbe(this.ctx.sampleRate, band, ms), onDone);
   };
@@ -725,6 +923,7 @@ var GAIN = 0.72;          // 默认标准音量：够响，又不至于让喇叭
     makeWaveform: makeWaveform, makeProbe: makeProbe,
     goertzel: goertzel, classify: classify, bandEnergy: bandEnergy,
     classifyBest: classifyBest, peakFreq: peakFreq,
+    measureScale: measureScale, makeRuler: makeRuler,
     getGain: function () { return GAIN; },
     getScale: function () { return FORCED_SCALE || SHARED_SCALE; },
     setForcedScale: function (v) { FORCED_SCALE = (+v && Math.abs(+v - 1) > 1e-6) ? +v : 0; return FORCED_SCALE; },

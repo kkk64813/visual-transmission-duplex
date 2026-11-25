@@ -1,0 +1,1787 @@
+<!DOCTYPE html>
+<html lang="zh-CN"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>超声信道 · UltraLink</title>
+<style>
+  :root{
+    --bg:#f5f7f6; --surface:#ffffff; --ink:#16211e; --muted:#6c7a75;
+    --accent:#0e7c66; --accent-2:#0a5f4f; --line:#e1e8e4; --warn:#b4791f; --warn-bg:#fdf6e7;
+    --shadow:0 2px 14px rgba(20,40,35,.07);
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
+  header{position:sticky;top:0;z-index:10;display:flex;align-items:center;gap:10px;
+    padding:10px 14px;background:rgba(255,255,255,.92);backdrop-filter:blur(8px);
+    border-bottom:1px solid var(--line)}
+  .mark{width:26px;height:26px;border-radius:7px;background:linear-gradient(135deg,var(--accent),var(--accent-2));flex:none}
+  .brand{font-weight:700;letter-spacing:.02em}
+  .brand small{display:block;font-weight:400;color:var(--muted);font-size:11px;letter-spacing:.04em}
+  .dot{width:8px;height:8px;border-radius:50%;background:#c9d3cf;flex:none}
+  .dot.on{background:var(--accent);box-shadow:0 0 0 3px rgba(14,124,102,.16)}
+  .grow{flex:1}
+  nav{display:flex;gap:8px;padding:10px 14px 0}
+  .tab{flex:1;padding:9px 0;text-align:center;border:1px solid var(--line);background:#fff;
+    border-radius:10px;font-weight:600;color:var(--muted);cursor:pointer}
+  .tab.on{background:var(--accent);border-color:var(--accent);color:#fff}
+  main{padding:12px 14px 40px;max-width:760px;margin:0 auto}
+  .card{background:var(--surface);border:1px solid var(--line);border-radius:14px;
+    box-shadow:var(--shadow);padding:14px;margin-bottom:12px}
+  h3{margin:0 0 10px;font-size:13px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
+  .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+  button{border:1px solid var(--line);background:#fff;color:var(--ink);border-radius:10px;
+    padding:10px 16px;font:inherit;font-weight:600;cursor:pointer;transition:.15s}
+  button:hover{border-color:#cfded8}
+  button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+  button.primary:hover{background:var(--accent-2)}
+  button.pill{border-radius:999px;padding:8px 14px;font-weight:500}
+  button.pill.on{background:#e8f5f0;border-color:var(--accent);color:var(--accent-2)}
+  button:disabled{opacity:.45;cursor:not-allowed}
+  .meter{display:flex;align-items:center;gap:10px;margin:7px 0;font-variant-numeric:tabular-nums}
+  .meter .nm{width:58px;font-size:12px;color:var(--muted);flex:none}
+  .meter .bar{flex:1;height:10px;border-radius:6px;background:#eef3f1;overflow:hidden}
+  .meter .bar i{display:block;height:100%;width:0;background:linear-gradient(90deg,#bfe6da,var(--accent));
+    border-radius:6px;transition:width .12s linear}
+  .meter .vl{width:52px;text-align:right;font-size:12px;color:var(--muted);flex:none}
+  .stats{display:flex;gap:14px;flex-wrap:wrap;font-size:12px;color:var(--muted);
+    font-variant-numeric:tabular-nums;margin-top:8px}
+  .stats b{color:var(--ink);font-weight:600}
+  .out{min-height:64px;white-space:pre-wrap;word-break:break-word;padding:10px 12px;
+    border:1px dashed #d8e3de;border-radius:10px;background:#fbfcfc;font-size:15px}
+  .log{max-height:128px;overflow:auto;font-size:12px;color:var(--muted);
+    font-family:ui-monospace,Menlo,Consolas,monospace;background:#fbfcfc;border-radius:10px;
+    padding:8px 10px;border:1px solid #eff4f2;margin-top:8px}
+  textarea{width:100%;min-height:92px;padding:10px 12px;border:1px solid var(--line);
+    border-radius:10px;font:inherit;resize:vertical;background:#fff;color:var(--ink)}
+  input[type=file]{font-size:13px}
+  .prog{height:6px;background:#eef3f1;border-radius:6px;overflow:hidden;margin-top:10px}
+  .prog i{display:block;height:100%;width:0;background:var(--accent);transition:width .2s}
+  .hint{font-size:12px;color:var(--muted);margin-top:8px;line-height:1.7}
+  .dbg{font-size:12px;color:var(--muted);line-height:1.9;font-variant-numeric:tabular-nums;
+    font-family:ui-monospace,Menlo,Consolas,monospace;background:#fbfcfc;border:1px solid #eff4f2;
+    border-radius:10px;padding:8px 10px}
+  .dbg b{color:var(--ink);font-weight:600}
+  .dbg .row2{display:grid;grid-template-columns:96px 1fr 46px 46px 46px;gap:6px}
+  .dbg .row2 span:last-child{text-align:right}
+  .warn{background:var(--warn-bg);border:1px solid #f0e2c4;color:#7a5416;border-radius:10px;
+    padding:10px 12px;font-size:13px;line-height:1.7;margin-bottom:12px}
+  .hide{display:none}
+  /* 大号实时频率：一眼看收发在几千赫 */
+  .live{display:flex;align-items:flex-end;gap:10px;margin:2px 0 4px}
+  .live .hz{font-size:38px;font-weight:700;letter-spacing:-1px;line-height:1;
+    font-variant-numeric:tabular-nums;color:var(--accent-2)}
+  .live .unit{font-size:14px;font-weight:600;color:var(--muted);padding-bottom:3px}
+  .live .tag{font-size:12px;color:var(--muted);padding-bottom:5px}
+  /* 折叠卡：自检/高级全部收进一个 details 里，默认收起 */
+  details.card{padding:0}
+  details.card>summary{list-style:none;cursor:pointer;padding:13px 14px;font-size:13px;
+    letter-spacing:.12em;text-transform:uppercase;color:var(--muted);display:flex;align-items:center;gap:8px}
+  details.card>summary::-webkit-details-marker{display:none}
+  details.card>summary::after{content:'＋';margin-left:auto;color:var(--muted);font-size:15px}
+  details.card[open]>summary::after{content:'－'}
+  details.card>summary:hover{color:var(--ink)}
+  details.card>.body{padding:0 14px 14px}
+  details.card[open]>summary{border-bottom:1px solid var(--line);margin-bottom:12px}
+  a{color:var(--accent);text-decoration:none}
+  footer{color:var(--muted);font-size:12px;text-align:center;padding:0 16px 28px}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="mark"></div>
+  <div class="brand">超声信道<small>UltraLink · 固定 18.1k · 24ms</small></div>
+  <div class="grow"></div>
+  <div class="dot" id="dot"></div>
+  <span style="font-size:12px;color:var(--muted)" id="stateTxt">未启动</span>
+</header>
+
+<nav>
+  <div class="tab on" id="tabRx" onclick="App.role('rx')">接收端</div>
+  <div class="tab" id="tabTx" onclick="App.role('tx')">发送端</div>
+</nav>
+
+<main>
+  <!-- 接收端 -->
+  <section id="panelRx">
+    <div class="card">
+      <div class="live">
+        <span class="hz" id="dPeak" style="font-size:22px;color:var(--muted)">待机</span>
+        <span class="unit">Hz</span>
+        <span class="tag">← 耳朵此刻听到的最强音</span>
+      </div>
+      <div class="row" style="margin-top:12px">
+        <button class="primary" id="btnMic" onclick="App.startRx()">开始监听</button>
+        <button id="btnStop" onclick="App.stopRx()" disabled="">停止</button>
+        <button class="pill" onclick="App.clearAll()">清空</button>
+        <span class="hint" id="rxNow" style="margin:0">待机</span>
+      </div>
+      <div id="meters" style="margin-top:12px"><div class="meter"><span class="nm">18.1k</span><span class="bar"><i id="bar-mid"></i></span><span class="vl" id="val-mid">-</span></div></div>
+      <div class="stats">
+        <span>解出包 <b id="stPk">0</b></span>
+        <span>同步失配 <b id="stSync">0</b></span>
+        <span>CRC 失败 <b id="stCrc">0</b></span>
+        <span>采样 <b id="stSr">—</b></span>
+      </div>
+      <div class="hint">只有一个档：18.1k（18100–19500 Hz）。看这根条跳起来就说明这条链路活着。</div>
+    </div>
+
+    <div class="card">
+      <h3>收到的文字</h3>
+      <div class="row" style="margin-bottom:8px">
+        <span class="hint" style="margin:0;flex:none">回执</span>
+        <button class="pill on" data-ar="1" onclick="App.ackReply(true)">缺包自动回</button>
+        <button class="pill" data-ar="0" onclick="App.ackReply(false)">不回</button>
+        <button class="pill" onclick="App.loopAck(true)">自检：循环发回执</button>
+        <button class="pill" onclick="App.loopAck(false)">停</button>
+        <span class="hint" id="ackLoopCnt" style="margin:0">没在循环</span>
+      </div>
+      <div class="hint" id="ackSent">回执：本机还没发过（发过会在这里显示次数与档位）</div>
+      <div class="out" id="outText">（空）</div>
+      <div id="fileBox" class="hide" style="margin-top:10px">
+        <div class="hint" id="fileInfo"></div>
+        <div class="prog"><i id="fileProg"></i></div>
+      </div>
+    </div>
+
+    <details class="card">
+      <summary>自检 · 高级</summary>
+      <div class="body">
+        <div class="row">
+          <button class="primary" id="btnCal" onclick="App.autoCal()">立即重校（自动测量）</button>
+          <button id="btnCalStop" onclick="App.calStop()" disabled="">停止</button>
+          <span class="hint" id="calStat" style="margin:0">每次发送前会自动校，不用按</span>
+        </div>
+        <div class="hint" style="margin-top:6px">让对方点「循环发校准包」，这边点上面的按钮：3 档频带 × 3 种符号长度挨个试，再把最能过的那组应用。</div>
+        <textarea id="calOut" class="out" readonly="" style="font-size:11px;line-height:1.5;height:150px;width:100%;overflow:auto;white-space:pre;resize:vertical;font-family:ui-monospace,Menlo,Consolas,monospace;margin-top:8px">（未校正）</textarea>
+        <div class="row" style="margin-top:6px">
+          <button class="pill" onclick="App.calSelect()">全选报告</button>
+          <button class="pill" onclick="App.calCopy()">复制报告</button>
+        </div>
+
+        <div class="dbg" style="margin-top:14px">
+          <div>采样率 <b id="dSr">—</b> · 麦克风原始 <b id="dMic">—</b></div>
+          <div>缓冲 <b id="dBuf">—</b> · 扫描位置 <b id="dScan">—</b></div>
+          <div>收样 <b id="dDrop">—</b> <span class="hint" style="margin:0">（低于 100% = CPU 跟不上，在丢样）</span></div>
+          <div>能量门控 <b id="dGate">—</b> <span class="hint" style="margin:0">（只让有声音的那档跑解码）</span></div>
+        </div>
+        <div id="dDec" class="dbg" style="margin-top:8px"><div class="row2" style="color:#0a5f4f"><span>档 / 符号</span><span>状态</span><span>同步</span><span>CRC</span><span>边距</span></div><div class="row2" id="dec-mid-24"><span>18.1k/24ms</span><span class="st">待机</span><span class="sy">0</span><span class="cr">0</span><span class="mg">—</span></div></div>
+        <div class="row" style="margin-top:10px;align-items:center">
+          <span class="hint" style="margin:0;flex:none">频率校准</span>
+          <input type="range" id="rCal" min="-1" max="1" step="0.1" value="0" style="flex:1;accent-color:#0e7c66">
+          <span class="hint" id="vCal" style="margin:0;flex:none;width:64px;text-align:right">自动</span>
+          <button class="pill" onclick="App.calib(0)">自动</button>
+        </div>
+
+        <div class="row" style="margin-top:14px">
+          <button class="pill" onclick="App.diagSelect()">全选日志</button>
+          <button class="pill" onclick="App.diagCopy()">复制日志</button>
+          <button class="pill" onclick="App.diagClear()">清空</button>
+          <span class="hint" id="diagCnt" style="margin:0">0 行</span>
+        </div>
+        <textarea id="diagBox" class="out" readonly="" style="font-size:11px;line-height:1.5;height:170px;width:100%;overflow:auto;white-space:pre;resize:vertical;font-family:ui-monospace,Menlo,Consolas,monospace;margin-top:8px">（空）</textarea>
+      </div>
+    </details>
+
+    <div class="card">
+      <h3>日志</h3>
+      <div class="log" id="log"><div style="color: rgb(180, 121, 31);">17:44:40  已固定 24ms 一种速度（16/32ms 已下线，减少变量）</div><div>17:44:40  每包载荷 16 字节（约 1.7 秒/包）</div></div>
+    </div>
+  </section>
+
+  <!-- 发送端 -->
+  <section id="panelTx" class="hide">
+    <div class="card">
+      <div class="live">
+        <span class="hz" id="sOut" style="font-size:22px;color:var(--muted)">静音</span>
+        <span class="unit">Hz</span>
+        <span class="tag" id="txTag">档位 · 18.1k（18100 Hz 起）</span>
+      </div>
+      <div class="live" id="ackLive" style="margin-top:6px;display:none">
+        <span class="hz" id="ackSig" style="font-size:26px;color:var(--accent-2)">安静</span>
+        <span class="tag" id="ackSigTag">回执监听 · 信号强度</span>
+      </div>
+      <div class="row" style="margin-top:12px" id="bandRow"><span class="tag">固定 · 18.1k（18100–19500 Hz）· 24ms</span></div>
+      <div class="hint" id="bandNote">只用这一档、这一速：18.1k 在手机扬声器和电脑麦克风上都是满能量，20.5k 只有三成、22.3k 电脑收不到，所以分档全部下线。</div>
+      <div class="row" style="margin-top:10px">
+        <button class="pill" data-gn="0.35" onclick="App.gain(0.35)">音量 · 静默</button>
+        <button class="pill" data-gn="0.5" onclick="App.gain(0.5)">音量 · 轻</button>
+        <button class="pill on" data-gn="0.72" onclick="App.gain(0.72)">音量 · 标准</button>
+        <button class="pill" data-gn="0.9" onclick="App.gain(0.9)">音量 · 响</button>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <button onclick="App.stopAll()" style="color:#c0392b">■ 立即硬停</button>
+        <span class="hint" id="txRate" style="margin:0">18.1k · 24ms/符号 · 每包 16B</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>发文字</h3>
+      <textarea id="txt" placeholder="要送过去的文字，例如一串 Wi-Fi 密码、一句口令、一个地址"></textarea>
+      <div class="row" style="margin-top:10px">
+        <button class="primary" id="btnSend" onclick="App.sendText()">发送</button>
+        <span class="hint" id="txtInfo" style="margin:0"></span>
+      </div>
+      <div class="prog"><i id="txtProg"></i></div>
+    </div>
+
+    <details class="card">
+      <summary>发送设置（每包字节 / 回执）</summary>
+      <div class="body">
+        <div class="hint">频段与速度已固定：18.1k · 24ms（分档和变速都下线了，减少变量才能定位问题）。</div>
+        <div class="row" style="margin-top:10px">
+          <button class="pill" data-rp="2" onclick="App.repeat(2)">每包发 2 遍</button>
+          <button class="pill" data-rp="3" onclick="App.repeat(3)">3 遍</button>
+          <button class="pill on" data-rp="1" onclick="App.repeat(1)">1 遍</button>
+        </div>
+        <div class="row" style="margin-top:8px">
+          <span class="hint" style="margin:0;flex:none">每包字节</span>
+          <button class="pill" data-cb="8" onclick="App.chunk(8)">8</button>
+          <button class="pill" data-cb="12" onclick="App.chunk(12)">12</button>
+          <button class="pill on" data-cb="16" onclick="App.chunk(16)">16</button>
+          <button class="pill" data-cb="24" onclick="App.chunk(24)">24</button>
+          <button class="pill" data-cb="48" onclick="App.chunk(48)">48</button>
+        </div>
+        <div class="hint" id="chunkNote" style="margin-top:6px">每包 16 字节 ≈ 24ms 下 1.7 秒一包。包越短越抗中途失步，中文（一个字 3 字节）尤其要短。</div>
+        <div class="row" style="margin-top:12px">
+          <span class="hint" style="margin:0;flex:none">可靠发送</span>
+          <button class="pill on" data-wa="1" onclick="App.waitAck(true)">等回执补包</button>
+          <button class="pill" data-wa="0" onclick="App.waitAck(false)">不等（盲发）</button>
+        </div>
+      </div>
+    </details>
+
+    <details class="card">
+      <summary>自检 · 高级</summary>
+      <div class="body">
+        <div class="row">
+          <button id="btnProbe" onclick="App.probe()">发探测音（1.2 秒）</button>
+          <button onclick="App.selfListen()">自听录音（2 秒）</button>
+          <button onclick="App.calibrate()">先发校准（3 短包）</button>
+        </div>
+        <div class="hint" style="margin-top:6px">探测音先确认这条频带能不能过；自听录音会把「可听带 / 超声带」两个 dB 数报出来。</div>
+        <div class="row" style="margin-top:10px">
+          <button class="pill" onclick="App.testMic()">测回执麦克风</button>
+          <button class="pill" onclick="App.testAck()">回执自检（听 8 秒）</button>
+        </div>
+        <div class="row" style="margin-top:10px">
+          <button id="btnLoop" onclick="App.loopCal()">循环发校准包</button>
+          <span class="hint" id="loopCnt" style="margin:0">点一次开始，再点一次停</span>
+        </div>
+        <div class="dbg" style="margin-top:12px">
+          <div>本机采样率 <b id="sSr">—</b></div>
+        </div>
+        <div class="row" style="margin-top:12px">
+          <button onclick="App.quietPreset()">一键「静音优先」</button>
+          
+        </div>
+        <div class="hint">人耳听到的那点声音，多是喇叭把超声“检波”出来的：幅度降一半，失真降到四分之一。想安静先降音量，再降速度，别先换频段。</div>
+      </div>
+    </details>
+
+    <details class="card">
+      <summary>发小文件（≤ 8 KB）</summary>
+      <div class="body">
+        <div class="row">
+          <input type="file" id="file" onchange="App.pickFile(this)">
+          <button class="primary" id="btnSendFile" onclick="App.sendFile()" disabled="">发送文件</button>
+        </div>
+        <div class="hint" id="fileSendInfo">8 KB 大约需要 6–8 分钟，中途别切后台。</div>
+        <div class="prog"><i id="fileSendProg"></i></div>
+      </div>
+    </details>
+
+    <div class="card">
+      <h3>日志</h3>
+      <div class="log" id="logTx"><div style="color: rgb(180, 121, 31);">17:44:40  已固定 24ms 一种速度（16/32ms 已下线，减少变量）</div><div>17:44:40  每包载荷 16 字节（约 1.7 秒/包）</div></div>
+    </div>
+  </section>
+</main>
+
+
+<footer>
+  纯本地：声音只在空气里走，不经过网络。 版本 v2026-11-25u（每次发送前自动标尺校准 · 一次频谱测量 · 单档 18.1k/24ms）返回 <a href="./index.html">首页</a> ·
+  双工控制通道见 <a href="./duplex.html">duplex</a>
+</footer>
+
+<script src="ultra-core.js?v=20261125u"></script>
+<script>
+var App = (function () {
+  /* ===== 单档单速（2026-11-25 起）=====
+   * 只用 18.1k（18100–19500，8 音 ×200Hz）+ 24ms 一种速度，不再分档、不再轮流。
+   * 理由是真机数据：18.1k 在手机扬声器/电脑麦克风都是 100%，20.5k 只剩 30%，22.3k 电脑收不到。
+   * 加宽到 18–21k 不会提高容错（容错来自音间距和时间长度），只会让一半数据落在最弱的频段上。
+   * 顺带把 9 个解码器砍成 1 个，手机 CPU 掉样/卡死的问题从根上消失。 */
+  var ONE_BAND = 'mid', ONE_SP = 24;
+  var band = Ultra.bandByKey ? Ultra.bandByKey(ONE_BAND) : Ultra.BANDS[0];
+  var autoBand = false;
+  var chunkBytes = 16;             // 每包载荷字节：实测真机单包 >2.5 秒几乎必挂，16B@24ms ≈1.7 秒最稳
+  /* 回执同样走 18.1k + 24ms（和数据同一档，参数只留一套，少一个变量就少一处错）。 */
+  var ACK_BAND = ONE_BAND, ACK_SP = ONE_SP, ACK_COPIES = 2, ACK_EVERY_MS = 2400;
+  /* 只有一个档，所以发送端永远用它；peerIsPC / 自动轮流这些分档逻辑全部退役（保留变量避免旧调用报错）。 */
+  var peerIsPC = false, ackDoneSent = 0;
+  function allowedBands() { return [band]; }
+  function txBandAt() { return band; }
+  var ackReplyOn = true;           // 接收端：缺包时自动回执
+  var waitAckOn = true;            // 发送端：等回执再补包
+  var lastPktAt = 0, lastAckAt = 0, ackRound = 0, lastCalAt = 0;
+  function now() { return performance.now ? performance.now() : Date.now(); }
+  var ackDec = null, ackProc = null, ackSrc = null, ackMic = null, ackBusy = false, ackDead = false;
+  var loopTimer = null, loopN = 0, loopOn = false; // 循环发校准包
+  var symMs = ONE_SP, repeats = 2;
+  var ctx = null, tx = null;
+  var micStream = null, proc = null;
+  var decoders = [];               // 3 band × 2 speed
+  var running = false;
+  /* 音频回调 → 队列 → 定时泵：解码和录音彻底解耦，手机不会再被解码卡死 */
+  var rxQueue = [], rxPump = null, qWarned = false, gateFaulted = false, rxPending = false;
+  var textState = { total: 0, parts: {} };
+  var fileState = null;
+  var bufForMeter = new Float32Array(0);
+
+  function $(id) { return document.getElementById(id); }
+
+  function log(msg, cls) {
+    var el = $('log'), txlog = $('logTx');
+    var t = new Date();
+    var line = ('0' + t.getHours()).slice(-2) + ':' + ('0' + t.getMinutes()).slice(-2) + ':' +
+      ('0' + t.getSeconds()).slice(-2) + '  ' + msg;
+    [el, txlog].forEach(function (e) {
+      if (!e) return;
+      var d = document.createElement('div');
+      d.textContent = line;
+      if (cls) d.style.color = cls;
+      e.appendChild(d);
+      e.scrollTop = e.scrollHeight;
+      while (e.childNodes.length > 200) e.removeChild(e.firstChild);
+    });
+  }
+
+  function setState(txt, on) {
+    $('stateTxt').textContent = txt;
+    $('dot').className = 'dot' + (on ? ' on' : '');
+  }
+
+  /* ---------- 界面初始化 ---------- */
+  function buildBandRow() {
+    var row = $('bandRow');
+    if (row) {
+      row.innerHTML = '<span class="tag">固定 · 18.1k（18100–19500 Hz）· 24ms</span>';
+    }
+    var bn = $('bandNote');
+    if (bn) bn.textContent = '只用这一档、这一速：18.1k 在手机扬声器和电脑麦克风上都是满能量，20.5k 只有三成、22.3k 电脑收不到，所以分档全部下线。';
+    buildMeters();
+  }
+
+  function buildMeters() {
+    var m = $('meters');
+    if (!m) return;
+    m.innerHTML = '';
+    /* 只剩一档，就只画一根条：18.1k 能量。 */
+    Ultra.BANDS.forEach(function (b) {
+      if (b.key !== ONE_BAND) return;
+      var d = document.createElement('div');
+      d.className = 'meter';
+      d.innerHTML = '<span class="nm">18.1k</span><span class="bar"><i id="bar-' + b.key + '"></i></span><span class="vl" id="val-' + b.key + '">-</span>';
+      m.appendChild(d);
+    });
+  }
+
+  /* ---------- 频带能量门控（第 2 版） ----------
+   * 上一版有个致命问题：底噪基线一开始就取「第一块音频的能量」，如果监听时对方已经在发，
+   * 基线就等于信号本身 → 门控把信号当成底噪、永远不放行，样本一个都喂不进解码器
+   * （真机现象：同步失败 0 次、命中 0/8、什么都没解出）。
+   * 这一版：开麦后先留 400ms 量环境底噪（正常都是先开麦再发包），之后用「快降慢升」的
+   * 地板跟踪；另外每隔 8 块无条件放行一块做盲探，就算门控判断错了也不会永久失明。 */
+  var gateFloorDb = {}, gateOn = { mid: true, hi: true, top: true }, gateN = 0, gateWarm = 0, gateHold = {}, gateLogAt = 0;
+  var gateLatestE = { mid: 0, hi: 0, top: 0, floor: { mid: 0, hi: 0, top: 0 } };
+  function gateProbe(chunk) {
+    var sr = ctx ? ctx.sampleRate : 48000;
+    var n = Math.min(chunk.length, Math.round(sr * 0.06));
+    if (n < 512) return;
+    var sl = chunk.subarray(chunk.length - n);
+    gateN++;
+    /* 只有一档，只测这一档的能量，省掉 2/3 的 Goertzel 开销。 */
+    var eMid = Ultra.bandEnergy(sl, sr, band).peak;
+    var es = { mid: eMid, hi: 0, top: 0 };
+    var maxE = eMid, maxKey = band.key;
+    /* 前 400ms 一边量环境底噪、一边照常放行（宁可多跑几块 CPU，也不能把开头的包丢掉）。 */
+    if (gateWarm < 5) {
+      gateWarm++;
+      var f0 = gateFloorDb.mid;
+      gateFloorDb.mid = f0 == null ? eMid : Math.min(f0, eMid);
+      gateOn.mid = true;
+      if ($('dGate')) $('dGate').textContent = '量底噪… ' + gateWarm + '/5';
+      return;
+    }
+    /* 地板快降慢升：比地板小就立刻跟着降，比地板大只允许每次抬 2%，
+     * 这样持续发包时地板不会一路追到信号电平上把门关死。 */
+    var f = gateFloorDb.mid;
+    if (f == null || eMid < f) f = eMid;
+    else f = Math.min(eMid, f * 1.02);
+    gateFloorDb.mid = f;
+    gateOn.mid = eMid > Math.max(f * 2.5, 1e-9);
+    if (gateOn.mid) gateHold.mid = performance.now();
+    /* 刚刚有声、现在判断成静音 → 再放行 400ms，避免包和包之间的缝隙把锁弄断。 */
+    if (!gateOn.mid && gateHold.mid && performance.now() - gateHold.mid < 400) gateOn.mid = true;
+    var now = performance.now();
+    gateLatestE = { mid: eMid, floor: f };
+    if (now - gateLogAt > 2000) {
+      gateLogAt = now;
+      if ($('dGate')) $('dGate').textContent = '18.1k ' + (gateOn.mid ? '有声 · 解码中' : '安静 · 不解码');
+    }
+  }
+  /* 每 8 块无条件全放行一次：门控只用来省 CPU，绝不作为「能不能解出」的唯一闸门。 */
+  function gateBlind() { return (gateN % 8) === 0; }
+
+  /* ---------- 接收 ---------- */
+  function makeDecoders(sr) {
+    decoders = [];
+    /* 只开一个：18.1k + 24ms。原来 3 档 × 3 速度 = 9 个解码器是手机卡死/掉样的总根源。 */
+    var b = Ultra.bandByKey(ONE_BAND), sp = ONE_SP;
+    var d = new Ultra.StreamDecoder(sr, b, sp);
+    d.onPacket = function (payload) { onPacket(payload, b, sp); };
+    d.onError = function (kind) {
+      if (kind === 'crc') { inc('stCrc'); } else { inc('stSync'); }
+    };
+    d.onDiag = diagPush;
+    decoders.push(d);
+  }
+
+  /* 回执故意用比用户设定更高的音量：手机一开麦，安卓常把播放路由到听筒，实际很小声，
+   * 再叠上「音量·静默」预设就彻底听不见了。只在这几下播放期间临时抬到 0.9，播完还原。 */
+  var ackPrevGain = null;
+  function ackGainOn() { if (ackPrevGain == null) { ackPrevGain = Ultra.getGain(); Ultra.setGain(0.9); } }
+  function ackGainOff() { if (ackPrevGain != null) { Ultra.setGain(ackPrevGain); ackPrevGain = null; } }
+  var ackSentN = 0;
+  function ackMark() {
+    ackSentN++;
+    var el = document.getElementById('ackSent');
+    if (el) el.textContent = '回执：本机已发 ' + ackSentN + ' 次 · 18.1k / ' + ACK_SP + 'ms（最近 ' +
+      new Date().toTimeString().slice(0, 8) + '）';
+  }
+
+  /* 接收端回执：只要还有缺包、链路开着，就每 2.2 秒回一次位图，直到收齐。
+   * 以前用「静默 0.9 秒」当触发条件，一旦解码器反复吐同一个包，lastPktAt 永远在刷新，
+   * 回执就永远发不出去 —— 发端收到的是「一包都没确认」。这里改成纯节流，不再依赖静默。 */
+  /* 零回执：一包都没解出时也要回一句「我听到能量了，但解不出」。
+   * 关键：以前收端没解出任何包就完全沉默，发端只能看到「没回执」，永远分不清是对方没收到
+   * 还是自己听不到回执。总包数用 0 表示「什么都还没有」，发端据此重发并提示换档。 */
+  var zeroAckAt = 0;
+  function maybeZeroAck() {
+    if (!ackReplyOn || !tx || !ctx || !running) return;
+    if (textState.total) return;                    // 已经解出过包，走正常回执
+    var now = performance.now();
+    if (now - zeroAckAt < 4000) return;
+    var e = gateLatestE.mid;
+    var f = gateLatestE.floor || 0;
+    if (!(e > Math.max(f * 8, 1e-6))) return;       // 只是噪声，不打扰对方
+    zeroAckAt = now;
+    var pkt = Ultra.buildPacket(Ultra.ackPayload(++ackRound, 0, function () { return false; }));
+    log('没解出任何包，但仍回一条「听到了·解不出」· 18.1k/' + ACK_SP + 'ms', '#b4791f');
+    ackGainOn();
+    ackMark();
+    tx.send(pkt, Ultra.bandByKey(ACK_BAND), ACK_SP, function () { ackGainOff(); });
+  }
+
+  function maybeAck() {
+    if (!ackReplyOn || !tx || !ctx) return;
+    if (!textState.total) return;
+    var miss = [];
+    for (var i = 0; i < textState.total; i++) if (!textState.parts[i]) miss.push(i);
+    /* 收齐也要回一次「全部收到」：发端是靠回执才停的，收齐若不吭声，发端会一直重发。 */
+    if (!miss.length) {
+      if (ackDoneSent) return;
+      ackDoneSent = 1;
+      var okPkt = Ultra.buildPacket(Ultra.ackPayload(++ackRound, textState.total,
+        function () { return true; }));
+      var ob = Ultra.bandByKey(ACK_BAND), on = 0, oc = ACK_COPIES + 1;
+      log('已收齐 ' + textState.total + '/' + textState.total + '：回一次「全部收到」· ' +
+        ob.name + '/' + ACK_SP + 'ms ×' + oc, '#0a5f4f');
+      ackGainOn();
+      (function oneOk() {
+        if (on >= oc) { ackGainOff(); return; }
+        on++;
+        ackMark();
+        tx.send(okPkt, ob, ACK_SP, function () { setTimeout(oneOk, 200); });
+      })();
+      return;
+    }
+    var now = performance.now();
+    if (lastPktAt && now - lastPktAt > 20000) return;   // 对方早就收工了，别自己一直播
+    if (now - lastAckAt < ACK_EVERY_MS) return;
+    lastAckAt = now;
+    if (ackRound > 200) ackRound = 0;
+    ackRound++;
+    var payload = Ultra.ackPayload(ackRound, textState.total, function (k) { return !!textState.parts[k]; });
+    var pkt = Ultra.buildPacket(payload);
+    var b = Ultra.bandByKey(ACK_BAND), n = 0;
+    log('回执 #' + ackRound + '：已收 ' + (textState.total - miss.length) + '/' + textState.total +
+      '，缺第 ' + miss.map(function (x) { return x + 1; }).join('、') + ' 包 · ' + b.name + '/' + ACK_SP + 'ms ×' + ACK_COPIES);
+    ackGainOn();
+    (function one() {
+      if (n >= ACK_COPIES) { ackGainOff(); return; }
+      n++;
+      ackMark();
+      tx.send(pkt, b, ACK_SP, function () { setTimeout(one, 200); });
+    })();
+  }
+
+  /* ---------- 回执自检（两端都能单独验这条反向链路） ---------- */
+  var ackLoopTimer = null, ackLoopAt = 0;
+  function ackLoopTick() {
+    if (!ackLoopTimer) return;
+    var now = performance.now();
+    if (now - ackLoopAt < 1500) return;
+    ackLoopAt = now;
+    var pkt = Ultra.buildPacket(Ultra.ackPayload(1, 1, function () { return false; }));
+    ackGainOn();
+    ackMark();
+    tx.send(pkt, Ultra.bandByKey(ACK_BAND), ACK_SP, function () { ackGainOff(); });
+  }
+
+  /* ---------- 一键自动校正 ----------
+   * 阶段 A：3 档频带 × 3 种符号长度，每格 1.8 秒，数解出的包
+   * 阶段 B：在最能过的那格里，把频率缩放在 −1.2%…+1.2% 之间扫一遍，每格 1.2 秒
+   * 结束时把最好的缩放直接应用到所有解码器，并存进 localStorage 下次自动带上。
+   */
+  var Cal = { running: false, stage: '', queue: [], k: 0, rows: [], best: null, timer: null, snap: null, hold: 0 };
+
+  function calDec(bandKey, sp) {
+    for (var i = 0; i < decoders.length; i++) {
+      if (decoders[i].band.key === bandKey && decoders[i].symMs === sp) return decoders[i];
+    }
+    return null;
+  }
+
+  function calMuteAll(except) {
+    decoders.forEach(function (d) { d.muted = (except && d !== except); });
+  }
+
+  function calStart() {
+    Cal.running = true;
+    Cal.queue = [];
+    Cal.rows = [];
+    Cal.best = null;
+    Cal.stage = 'B';                     // 只有一档一速，直接扫频率缩放，不再试 9 格档位
+    Cal.k = 0;
+    for (var s = -0.008; s <= 0.0081; s += 0.001) {
+      Cal.queue.push({ band: ONE_BAND, bname: '18.1k', sp: ONE_SP, scale: 1 + s });
+    }
+    $('btnCal').disabled = true;
+    $('btnCalStop').disabled = false;
+    log('自动校正开始：18.1k / 24ms，扫频率缩放 −0.8%…+0.8%（17 格，约 20 秒，每格 1.2 秒）');
+    calNext();
+  }
+
+  function calNext() {
+    if (!Cal.running) return;
+    clearTimeout(Cal.timer);
+    if (Cal.k >= Cal.queue.length) { calFinishStage(); return; }
+    var cell = Cal.queue[Cal.k];
+    var d = calDec(cell.band, cell.sp);
+    if (!d) { Cal.k++; calNext(); return; }
+    calMuteAll(d);
+    if (cell.scale != null) d.forceScale = cell.scale; else { d.forceScale = null; }
+    Cal.snap = { pk: d.stat.pk, sy: d.stat.sync, cr: d.stat.crc, mg: d.lastMargin };
+    Cal.hold = Cal.stage === 'A' ? 1800 : 1200;
+    $('calStat').textContent = '阶段 ' + Cal.stage + ' · ' + cell.bname + '/' + cell.sp + 'ms' +
+      (cell.scale != null ? ' ×' + cell.scale.toFixed(4) : '') + ' · ' + (Cal.k + 1) + '/' + Cal.queue.length;
+    Cal.timer = setTimeout(function () {
+      var dd = calDec(cell.band, cell.sp);
+      if (!dd) { Cal.k++; calNext(); return; }
+      var pk = dd.stat.pk - Cal.snap.pk;
+      var sy = dd.stat.sync - Cal.snap.sy;
+      var cr = dd.stat.crc - Cal.snap.cr;
+      Cal.rows.push({ stage: Cal.stage, band: cell.band, bname: cell.bname, sp: cell.sp, scale: cell.scale,
+        pk: pk, sy: sy, crcN: cr, bad: sy + cr, mg: dd.lastMargin || 0 });
+      if (cell.scale != null) {
+        diagLines.push(new Date().toTimeString().slice(0, 8) + ' SCALE ' + cell.bname + '/' + cell.sp + 'ms ×' +
+          cell.scale.toFixed(4) + ' 包=' + pk + ' 失配=' + (sy + cr) + ' 边距=' + (dd.lastMargin || 0).toFixed(1) + 'dB');
+      }
+      Cal.k++;
+      calNext();
+    }, Cal.hold);
+  }
+
+  function calFinishStage() {
+    if (Cal.stage === 'A') {
+      var best = null;
+      Cal.rows.forEach(function (r) {
+        if (!best || r.pk > best.pk || (r.pk === best.pk && r.mg > best.mg)) best = r;
+      });
+      if (!best || best.pk <= 0) {
+        // 一格都没解出：退一步，用「同步命中多」来选，至少能定位到能听见的那档
+        Cal.stage = 'A2';
+        Cal.queue = [];
+        Cal.k = 0;
+        Ultra.BANDS.forEach(function (b) {
+          [16, 24, 32].forEach(function (sp) { Cal.queue.push({ band: b.key, bname: b.name, sp: sp, scale: null, fallback: true }); });
+        });
+        log('阶段 A 一格都没解出：改用「锁上的次数」重跑一遍（先把音量调到响一档更保险）', '#b4791f');
+        calNext();
+        return;
+      }
+      Cal.best = best;
+      log('阶段 A 结论：' + best.bname + '/' + best.sp + 'ms 最好（' + best.pk + ' 包，边距 ' + best.mg.toFixed(0) + ' dB）', '#0a5f4f');
+      Cal.stage = 'B';
+      Cal.queue = [];
+      Cal.k = 0;
+      for (var s = -0.012; s <= 0.0121; s += 0.001) {
+        Cal.queue.push({ band: best.band, bname: best.bname, sp: best.sp, scale: 1 + s });
+      }
+      log('阶段 B 开始：在 ' + best.bname + '/' + best.sp + 'ms 上扫频率缩放 −1.2%…+1.2%（25 格）');
+      calNext();
+      return;
+    }
+    calFinish();
+  }
+
+  function calFinish() {
+    clearTimeout(Cal.timer);
+    Cal.running = false;
+    calMuteAll(null);
+    $('btnCal').disabled = false;
+    $('btnCalStop').disabled = true;
+    $('calStat').textContent = '完成';
+
+    var rowsB = Cal.rows.filter(function (r) { return r.stage === 'B'; });
+    var pickB = null;
+    rowsB.forEach(function (r) { if (!pickB || r.pk > pickB.pk || (r.pk === pickB.pk && r.mg > pickB.mg)) pickB = r; });
+
+    var out = [];
+    out.push('# UltraLink 一键校正报告 ' + new Date().toString());
+    out.push('# 采样率=' + (ctx ? ctx.sampleRate : '?') + ' 麦克风=' + ($('dMic') ? $('dMic').textContent : '?'));
+    out.push('');
+    out.push('阶段 A · 频带×符号（每格 1.8 秒）');
+    Cal.rows.filter(function (r) { return r.stage !== 'B'; }).forEach(function (r) {
+      out.push('  ' + pad(r.bname, 6) + '/' + pad(r.sp, 2) + 'ms  解出=' + pad(r.pk, 3) + ' 锁上=' + pad(r.sy, 3) +
+        ' CRC挂=' + pad(r.crcN, 3) + ' 边距=' + (r.mg ? r.mg.toFixed(1) : '-') + ' dB');
+    });
+
+    if (rowsB.length) {
+      out.push('');
+      out.push('阶段 B · 频率缩放（' + (pickB ? pickB.bname + '/' + pickB.sp + 'ms' : '') + '，每格 1.2s）');
+      rowsB.forEach(function (r) {
+        out.push('  ×' + r.scale.toFixed(4) + '  解出=' + pad(r.pk, 3) + ' 锁上=' + pad(r.sy, 3) + ' CRC挂=' + pad(r.crcN, 3) +
+          ' 边距=' + (r.mg ? r.mg.toFixed(1) : '-') + ' dB' + (r.pk > 0 ? '  ← 这个能出包' : ''));
+      });
+    }
+
+    out.push('');
+    if (pickB && pickB.pk > 0) {
+      Ultra.setForcedScale(pickB.scale);
+      decoders.forEach(function (d) { d.forceScale = pickB.scale; d.fScale = pickB.scale; });
+      $('rCal').value = Math.round((pickB.scale - 1) * 1000);
+      $('vCal').textContent = ((pickB.scale - 1) * 1000 > 0 ? '+' : '') +
+        ((pickB.scale - 1) * 1000).toFixed(1) + '‰';
+      out.push('结论：' + pickB.bname + '/' + pickB.sp + 'ms，频率缩放 ×' + pickB.scale.toFixed(4) +
+        '（' + ((pickB.scale - 1) * 1000).toFixed(1) + '‰），已应用到全部解码器。');
+      out.push('发送端请照这个设置：' + pickB.bname + ' 档 + ' + pickB.sp + 'ms 符号。');
+      try {
+        localStorage.setItem('ultra-calib', JSON.stringify({ band: pickB.band, sp: pickB.sp, scale: pickB.scale }));
+      } catch (e) {}
+      log('校正成功：' + pickB.bname + '/' + pickB.sp + 'ms ×' + pickB.scale.toFixed(4) + '，已应用', '#0a5f4f');
+    } else if (Cal.best && Cal.best.pk > 0) {
+      out.push('结论：能出包的是 ' + Cal.best.bname + '/' + Cal.best.sp + 'ms，但频率扫描没找到更好的点，保持自动补偿。');
+      out.push('发送端请用：' + Cal.best.bname + ' 档 + ' + Cal.best.sp + 'ms 符号。');
+      try { localStorage.setItem('ultra-calib', JSON.stringify({ band: Cal.best.band, sp: Cal.best.sp, scale: 1 })); } catch (e) {}
+      log('校正：' + Cal.best.bname + '/' + Cal.best.sp + 'ms 可出包，缩放保持自动', '#0a5f4f');
+    } else {
+      // 一格都没出包：退而求其次，按「锁上/失配次数」挑一格，至少能指出哪档听得见
+      var loud = null;
+      Cal.rows.forEach(function (r) {
+        var score = r.sy + r.crcN;
+        if (!loud || score > (loud.sy + loud.crcN) || (score === (loud.sy + loud.crcN) && r.mg > loud.mg)) loud = r;
+      });
+      out.push('结论：一排试完，一格都没解出包。');
+      if (loud && (loud.sy + loud.crcN) > 0) {
+        out.push('  最像有信号的一格：' + loud.bname + '/' + loud.sp + 'ms（锁上 ' + loud.sy + ' 次、CRC 失败 ' +
+          loud.crcN + ' 次、边距 ' + (loud.mg || 0).toFixed(0) + ' dB）');
+        out.push('  说明声音进得来但这组参数还没对上，或反射/失真太重。按下面顺序查：');
+      } else {
+        out.push('  9 格全都没锁上过，声音基本没进麦克风。按下面顺序查：');
+      }
+      out.push('  1. 音量：发送端调到「响」，距离 30–50 cm，喇叭正对麦克风');
+      out.push('  2. 别贴着墙面/桌面，反射会毁掉符号（本版已只判符号尾部，但反射太强仍不行）');
+      out.push('  3. 看「频带能量」哪一档跳起来；全都不动就是硬件把这几段滤掉了');
+      out.push('  4. 把下面的「诊断日志」整段复制发回作者');
+      log('校正失败：一格都没解出，请看报告里的排查顺序', '#c0392b');
+    }
+
+    $('calOut').value = out.join('\n');
+    out.forEach(function (l) { diagLines.push('CAL ' + l); });
+    if (diagLines.length > DIAG_MAX) diagLines = diagLines.slice(-DIAG_MAX);
+    var box = $('diagBox'); if (box) box.value = diagLines.join('\n');
+    $('diagCnt').textContent = diagLines.length + ' 行';
+  }
+
+  /* ---------- 诊断日志（环形缓冲 200 行，可复制/下载） ---------- */
+  var DIAG_MAX = 200, diagLines = [];
+
+  function diagPush(ev) {
+    var d = new Date();
+    var ts = ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2) + ':' +
+             ('0' + d.getSeconds()).slice(-2) + '.' + ('00' + d.getMilliseconds()).slice(-3);
+    var line = ts + ' ' + pad(ev.band, 6) + '/' + pad(ev.sym, 2) + 'ms ' + pad(ev.t, 4).toUpperCase() +
+      ' 命中=' + (ev.hits == null ? '-' : ev.hits) + '/8' +
+      ' 缩放=' + (ev.scale ? ev.scale.toFixed(4) : '-') +
+      ' 边距=' + (ev.margin ? ev.margin.toFixed(1) : '-') + 'dB' +
+      ' 最低=' + (ev.minMargin && ev.minMargin < 99 ? ev.minMargin.toFixed(1) : '-') + 'dB' +
+      ' 漂移=' + (ev.drift ? ev.drift.toFixed(1) : '-') + ' ' + (ev.info || '');
+    diagLines.push(line);
+    if (diagLines.length > DIAG_MAX) diagLines.shift();
+    var box = $('diagBox'), cnt = $('diagCnt');
+    if (box) {
+      box.value = diagLines.join('\n');
+      box.scrollTop = box.scrollHeight;
+    }
+    if (cnt) cnt.textContent = diagLines.length + ' 行';
+  }
+
+  function pad(v, n) {
+    v = v == null ? '' : String(v);
+    while (v.length < n) v += ' ';
+    return v;
+  }
+
+  function diagText() {
+    var head = [
+      '# UltraLink 诊断日志 ' + new Date().toString(),
+      '# 采样率=' + (ctx ? ctx.sampleRate : '?') + ' 频带=' + band.name + ' 符号=' + symMs + 'ms 重复=' + repeats +
+        ' 音量=' + (Ultra.getGain ? Ultra.getGain() : '?'),
+      '# 列：时间 档位/符号 事件 同步命中 缩放 边距 最低边距 漂移 备注'
+    ];
+    return head.concat(diagLines).join('\n') + '\n';
+  }
+
+  function onPacket(payload, b, sp) {
+    inc('stPk');
+    if (b && b.key) ackBandKey = b.key;      // 回执跟着「最后成功解出的那一档」走
+    var p = Ultra.parsePayload(payload);
+    if (!p) return;
+    if (p.type === 'text') {
+      // 同一段文字再发一次时要「续收」而不是清空重来：缺哪包补哪包，
+      // 这就是没有反向信道时的手动 ARQ —— 再点一次发送，缺的几包通常就补上了。
+      /* 任何一包的包头都带 total：哪怕第 0 包丢了，只要解出别的包也能知道总数、也能发回执。 */
+      if (textState.total !== p.total) { textState = { total: p.total, parts: {} }; lastAckAt = 0; ackDoneSent = 0; }
+      textState.parts[p.seq] = p.data;
+      lastPktAt = performance.now();
+      if (Object.keys(textState.parts).length === textState.total) {
+        var s = Ultra.joinText(textState.parts, textState.total);
+        $('outText').textContent = s || '';
+        log('收到文字 ' + (s ? s.length : 0) + ' 字 · 经 ' + b.name + '/' + sp + 'ms', '#0a5f4f');
+      } else {
+        var miss = [];
+        for (var k = 0; k < textState.total; k++) if (!textState.parts[k]) miss.push(k + 1);
+        $('outText').textContent = '接收中… ' + Object.keys(textState.parts).length + '/' + textState.total +
+          '（还缺第 ' + miss.join('、') + ' 包）';
+      }
+    } else if (p.type === 'fileHead') {
+      fileState = { name: p.name, size: p.size, total: p.total, parts: {}, got: 0 };
+      $('fileBox').className = '';
+      $('fileInfo').textContent = '文件：' + p.name + '（' + p.size + ' B，' + p.total + ' 块）';
+      log('文件开始：' + p.name, '#0a5f4f');
+    } else if (p.type === 'fileChunk' && fileState) {
+      if (!fileState.parts[p.seq]) { fileState.parts[p.seq] = p.data; fileState.got++; }
+      var pct = Math.round(fileState.got / fileState.total * 100);
+      $('fileProg').style.width = pct + '%';
+      $('fileInfo').textContent = '文件：' + fileState.name + ' · ' + fileState.got + '/' + fileState.total + ' 块（' + pct + '%）';
+      if (fileState.got === fileState.total) finishFile();
+    }
+  }
+
+  function finishFile() {
+    var parts = [];
+    for (var i = 0; i < fileState.total; i++) {
+      var d = fileState.parts[i];
+      if (!d) return;
+      for (var k = 0; k < d.length; k++) parts.push(d[k]);
+    }
+    var u8 = new Uint8Array(parts).subarray(0, fileState.size);
+    var blob = new Blob([u8], { type: 'application/octet-stream' });
+    var url = URL.createObjectURL(blob);
+    $('fileInfo').innerHTML = '文件完成：<a href="' + url + '" download="' + fileState.name + '">' + fileState.name + '</a>（' + fileState.size + ' B）';
+    log('文件完成：' + fileState.name, '#0a5f4f');
+  }
+
+  var tickN = 0, lastChunk = null;
+  var rxTotal = 0, rxT0 = 0, dropWarned = false;
+
+  function meterTick(chunk) {
+    lastChunk = chunk;
+    var sr = ctx ? ctx.sampleRate : 48000;
+    var half = Math.min(chunk.length, Math.round(sr * 0.09));
+    var slice = chunk.subarray(chunk.length - half);
+    Ultra.BANDS.forEach(function (b) {
+      var e = Ultra.bandEnergy(slice, sr, b);
+      var lvl2 = e.peak > 0 ? Math.min(100, Math.round(20 * Math.log10(e.peak + 1) * 3)) : 0;
+      var bar = $('bar-' + b.key), val = $('val-' + b.key);
+      if (!bar) return;
+      bar.style.width = lvl2 + '%';
+      val.textContent = lvl2 + '%';
+    });
+
+    tickN++;
+    if (tickN % 2 === 0) {                     // 约每 0.17 秒刷一次，肉眼就是「实时」
+      var pk = Ultra.peakFreq(slice, sr, 16000, 23800, 80);
+      var el = $('dPeak');
+      if (el) {
+        el.textContent = pk.f ? pk.f : '安静';
+        el.style.fontSize = pk.f ? '38px' : '22px';
+        el.style.color = pk.f >= 17500 ? 'var(--accent-2)' : (pk.f ? '#c0392b' : 'var(--muted)');
+      }
+      var lv = $('rxNow');
+      if (lv) lv.textContent = pk.f ? ('听到 ' + (pk.f >= 17500 ? '超声' : '低频杂音')) : '很安静';
+      updateDbg();
+    }
+    maybeAck();
+  }
+
+  /* 轻量界面刷新：只在音频回调里读最后一块、画能量条，不做峰值扫描、不碰解码。 */
+  var liteN = 0;
+  function meterTickLite(chunk) {
+    lastChunk = chunk;
+    liteN++;
+    if (liteN % 4 !== 0) return;                  // 约 0.35 秒一次
+    var sr = ctx ? ctx.sampleRate : 48000;
+    var half = Math.min(chunk.length, Math.round(sr * 0.09));
+    var slice = chunk.subarray(chunk.length - half);
+    var e = Ultra.bandEnergy(slice, sr, band);
+    var lvl2 = e.peak > 0 ? Math.min(100, Math.round(20 * Math.log10(e.peak + 1) * 3)) : 0;
+    var bar = $('bar-' + band.key), val = $('val-' + band.key);
+    if (bar) {
+      bar.style.width = lvl2 + '%';
+      if (val) val.textContent = lvl2 + '%';
+    }
+    tickN++;
+    var pk = Ultra.peakFreq(slice, sr, 16000, 23800, 80);
+    var el = $('dPeak');
+    if (el) {
+      el.textContent = pk.f ? pk.f : '安静';
+      el.style.fontSize = pk.f ? '38px' : '22px';
+      el.style.color = pk.f >= 17500 ? 'var(--accent-2)' : (pk.f ? '#c0392b' : 'var(--muted)');
+    }
+    var lv = $('rxNow');
+    if (lv) lv.textContent = pk.f ? ('听到 ' + (pk.f >= 17500 ? '超声' : '低频杂音')) : '很安静';
+    /* 收样率：回调里只累加样本数，这里算比值 —— 这才是「麦克风到底喂进来多少」的真数。 */
+    if (rxT0) {
+      var el2 = (performance.now() - rxT0) / 1000;
+      if (el2 > 1) {
+        var ratio = rxTotal / (sr * el2);
+        var dr = document.getElementById('dDrop');
+        if (dr) dr.textContent = (ratio * 100).toFixed(1) + '%';
+        if (ratio < 0.9 && !dropWarned) {
+          dropWarned = true;
+          log('收样只剩 ' + (ratio * 100).toFixed(0) + '%：解码仍跟不上，先把后台应用关掉；UI 已不再阻塞音频', '#b4791f');
+        }
+      }
+    }
+    updateDbg();
+    maybeAck();
+    maybeZeroAck();
+    /* 自动校准：监听中、且已经 0.7 秒没解出过任何包，就自己量一次频率 ——
+     * 不用人按按钮。对端每次发送前都会先播标尺音，正好给这一步提供干净的素材。
+     * 节流 0.9 秒一次；量不通就保持原值（不用噪声去「校」出个偏移）。 */
+    if (running && now() - lastCalAt > 900 && now() - lastPktAt > 700) {
+      lastCalAt = now();
+      autoCalSilent();
+    }
+  }
+
+  /* 自动校准（静默版）：只在结果真的把同步头对上了、且偏移有明显变化时才写日志，
+   * 避免刷屏；结果同时更新「自动 ×1.00xx」那一栏。 */
+  /* 立即重校（也用于按钮）：一次频谱测量 + 同步头验证，约 1 秒出结果。
+   * 不再是以前那套「17 格 × 每格等 1.2 秒」的盲扫 —— 那套要多按、要等 20 秒、还会被人按错。 */
+  function autoCalNow() {
+    if (!decoders.length) { log('还没开监听：先点「开始监听」', '#b4791f'); return; }
+    var d = decoders[0];
+    var sr = ctx ? ctx.sampleRate : 48000;
+    if (d.fill < Math.round(sr * 0.42)) { log('音频还不够 0.4 秒，先让对方发一段标尺/数据', '#b4791f'); return; }
+    var prev = d.fScale;
+    var c = d.autoCalibrate(420);
+    if (!c) { log('重校：音频太短，跳过', '#b4791f'); return; }
+    if (c.ok) {
+      log('重校完成：×' + c.scale.toFixed(4) + '（同步命中 ' + c.hits + '/8，粗测 ×' + c.measured.toFixed(4) +
+        (Math.abs(c.scale - prev) > 2e-4 ? '，原 ×' + prev.toFixed(4) : '，与原值一致') + '）', '#0a5f4f');
+      onCalApplied(c);
+      if ($('calStat')) $('calStat').textContent = '已完成 ×' + c.scale.toFixed(4) + ' · 命中 ' + c.hits + '/8';
+    } else {
+      log('重校未通过：同步命中只 ' + c.hits + '/8，保持 ×' + d.fScale.toFixed(4) + ' 不变', '#b4791f');
+      if ($('calStat')) $('calStat').textContent = '未通过（命中 ' + c.hits + '/8）';
+    }
+  }
+
+  function autoCalSilent() {
+    if (!decoders.length) return;
+    var d = decoders[0];
+    if (d.fill < Math.round((ctx ? ctx.sampleRate : 48000) * 0.42)) return;
+    var prev = d.fScale;
+    var c = d.autoCalibrate(420);
+    if (!c) return;
+    if (c.ok) {
+      if (Math.abs(c.scale - prev) > 0.0015) {
+        log('自动校准：×' + c.scale.toFixed(4) + '（同步命中 ' + c.hits + '/8，粗测 ×' + c.measured.toFixed(4) + '）', '#0a5f4f');
+        onCalApplied(c);
+      }
+    } else if (d.triedCal !== prev) {
+      d.triedCal = prev;
+      log('自动校准没通过：同步命中只 ' + c.hits + '/8，先不改（等标尺音或让对端发一段）', '#b4791f');
+    }
+  }
+
+  function onCalApplied(c) {
+    if ($('calStat') && !Cal.running) $('calStat').textContent = '自动 ×' + c.scale.toFixed(4) + ' · 命中 ' + c.hits + '/8';
+    if ($('vCal') && !$('rCal').value) $('vCal').textContent = '自动 ×' + c.scale.toFixed(4);
+  }
+
+  /* 解码信息表：每个解码器一行（频带 × 符号长度） */
+  function buildDbgRows() {
+    var box = $('dDec');
+    if (!box) return;
+    box.innerHTML = '<div class="row2" style="color:#0a5f4f"><span>档 / 符号</span><span>状态</span><span>同步</span><span>CRC</span><span>边距</span></div>';
+    var b = Ultra.bandByKey(ONE_BAND);
+    var d = document.createElement('div');
+    d.className = 'row2';
+    d.id = 'dec-' + b.key + '-' + ONE_SP;
+    d.innerHTML = '<span>18.1k/' + ONE_SP + 'ms</span><span class="st">待机</span><span class="sy">0</span><span class="cr">0</span><span class="mg">—</span>';
+    box.appendChild(d);
+  }
+
+  function updateDbg() {
+    var sr = ctx ? ctx.sampleRate : 0;
+    if ($('dSr')) $('dSr').textContent = sr ? (sr + ' Hz') : '—';
+    if ($('dBuf')) $('dBuf').textContent = decoders.length ? (decoders[0].fill + ' 采样') : '—';
+    if ($('vCal') && !$('rCal').value) $('vCal').textContent = '自动 ×' + (decoders.length ? decoders[0].fScale.toFixed(4) : '—');
+    if ($('dScan')) $('dScan').textContent = decoders.length ? decoders[0].scanAbs : '—';
+    decoders.forEach(function (d) {
+      var row = $('dec-' + d.band.key + '-' + d.symMs);
+      if (!row) return;
+      var st = row.querySelector('.st');
+      var okN = d.stat.pk, crcN = d.stat.crc, syN = d.stat.sync;
+      st.textContent = okN ? '解出 ' + okN : (syN ? '锁不上' : '待机');
+      st.style.color = okN ? '#0a5f4f' : (syN ? '#b4791f' : '');
+      row.querySelector('.sy').textContent = syN;
+      row.querySelector('.cr').textContent = crcN;
+      var mg = row.querySelector('.mg');
+      mg.textContent = d.lastMargin ? (d.lastMargin.toFixed(0) + ' dB') : '—';
+      mg.style.color = d.lastMargin >= 6 ? '#0a5f4f' : (d.lastMargin ? '#c0392b' : '');
+    });
+  }
+
+  /* 发送端自检：量自己的喇叭到底在放几千赫 */
+  var outAnalyser = null, outTimer = null;
+  function outPeakOnce() {
+    if (!outAnalyser) return;
+    var n = outAnalyser.fftSize || 4096;
+    var buf = new Float32Array(n);
+    outAnalyser.getFloatTimeDomainData(buf);
+    var sr = ctx ? ctx.sampleRate : 48000;
+    var pk = Ultra.peakFreq(buf, sr, 16000, 24000, 80);
+    var el = $('sOut');
+    if (el) {
+      el.textContent = pk.v > 1e-6 ? pk.f : '静音';
+      el.style.fontSize = pk.v > 1e-6 ? '38px' : '22px';
+      el.style.color = pk.f >= 17500 ? 'var(--accent-2)' : (pk.v > 1e-6 ? '#c0392b' : 'var(--muted)');
+    }
+  }
+
+  /* 发送档位提示：把「这轮用的是哪一档、中心多少赫」写在 Hz 下面，省得猜 */
+  function markTx(b, live) {
+    var t = $('txTag');
+    if (t && b) t.textContent = (live ? '正在发 · ' : '档位 · ') + b.name + '（' + b.f0 + ' Hz 起）';
+    var r = $('txRate');
+    if (r) r.textContent = '18.1k · ' + symMs + 'ms/符号 · 每包 ' + chunkBytes + 'B';
+  }
+
+  function markTxIdle() {
+    var t = $('txTag');
+    if (t) t.textContent = '未在发送';
+  }
+
+  /* ---------- 发送 ---------- */
+  function ensureCtx() {
+    if (!ctx) {
+      ctx = Ultra.makeCtx();
+      tx = new Ultra.Tx(ctx);
+      try {
+        outAnalyser = ctx.createAnalyser();
+        outAnalyser.fftSize = 4096;
+        outAnalyser.connect(ctx.destination);
+        tx.out = outAnalyser;               // 声音经 analyser 再出，才能量到自己
+      } catch (e) { outAnalyser = null; }
+    }
+    if (ctx.state === 'suspended') ctx.resume();
+    if ($('sSr')) $('sSr').textContent = ctx.sampleRate + ' Hz';
+    if (!outTimer) outTimer = setInterval(outPeakOnce, 200);
+    return ctx;
+  }
+
+  /* ---------- 可靠发送：发一轮 → 开麦收回执 → 只补缺的包 ---------- */
+  var sendSeq = 0, sending = false;
+
+  /* ---- 回执麦克风：一次发送只开一次麦 ---- 
+   * 每轮开一次麦在安卓上很容易吃 NotReadableError（上一次的 track 还没彻底释放），
+   * 真机日志里就是连着好几轮「开麦失败」然后把 6 轮额度空烧完。 */
+  var ackGot = null, ackStat = null;
+
+  function ackClose() {
+    ackGainOff();
+    ackMeterOff();
+    try { if (ackProc) ackProc.disconnect(); } catch (e) {}
+    try { if (ackSrc) ackSrc.disconnect(); } catch (e) {}
+    if (ackMic) { try { ackMic.getTracks().forEach(function (t) { t.stop(); }); } catch (e) {} ackMic = null; }
+    ackProc = null; ackSrc = null; ackDec = null; ackBusy = false;
+  }
+
+  /* ---- 回执信号强度表 ----   * 以前发端只听「解出/没解出」，分不清三种情况：对方根本没发、发了但电脑听不见、听得到却解不开。
+   * 这里在回执麦克风上直接量 18.1k 那档的峰值与相对底噪的强度，实时显示在发送端。 */
+  var ackFloorDb = null, ackShowAt = 0, ackLastDb = -99, ackLastF = 0, ackMaxDbfs = -120;
+  function ackMeter(c) {
+    var sr = ctx ? ctx.sampleRate : 48000;
+    var b = Ultra.bandByKey(ACK_BAND);
+    var e = Ultra.bandEnergy(c, sr, b).peak;
+    var db = 10 * Math.log10(e + 1e-18);
+    if (ackFloorDb == null || db < ackFloorDb) ackFloorDb = db;
+    else ackFloorDb = ackFloorDb * 0.99 + db * 0.01;
+    var rel = db - ackFloorDb;
+    ackLastDb = rel;
+    var amp = 2 * Math.sqrt(Math.max(0, e)) / Math.min(c.length, Math.round(sr * 0.08));
+    var dbfs = 20 * Math.log10(amp + 1e-9);
+    if (dbfs > ackMaxDbfs) ackMaxDbfs = dbfs;
+    var now = performance.now();
+    if (now - ackShowAt < 120) return;
+    ackShowAt = now;
+    var pk = Ultra.peakFreq(c, sr, 17500, 19600, 50);
+    ackLastF = pk.f;
+    var el = $('ackSig');
+    if (!el) return;
+    var hot = rel > 6;
+    el.textContent = (pk.f ? pk.f : (hot ? '有信号' : '安静'));
+    el.style.color = hot ? 'var(--accent-2)' : 'var(--muted)';
+    var tg = $('ackSigTag');
+    if (tg) tg.textContent = '回执监听 · 强度 +' + Math.max(0, rel).toFixed(0) + ' dB · 峰值 ' + ackMaxDbfs.toFixed(0) + ' dBFS';
+  }
+  function ackMeterReset() {
+    ackFloorDb = null; ackLastDb = -99; ackLastF = 0; ackMaxDbfs = -120;
+    var lv = $('ackLive'); if (lv) lv.style.display = 'flex';
+    var el = $('ackSig'); if (el) { el.textContent = '聆听中'; el.style.color = 'var(--muted)'; }
+  }
+  function ackMeterOff() {
+    var lv = $('ackLive'); if (lv) lv.style.display = 'none';
+  }
+
+  function ackOpen() {
+    if (ackMic && ackMic.getTracks().every(function (t) { return t.readyState === 'live'; })) {
+      return Promise.resolve(ackMic);
+    }
+    ackClose();
+    ackBusy = true;
+    return Ultra.openMic().then(function (stream) {
+      ensureCtx();
+      ackMic = stream;
+      /* 只挂 18.1k / 24ms 一个解码器：回执固定走这一档（电脑麦克风上限约 21.2k，22.3k 收不到）。
+       * 解码器同时把所有「同步/CRC」计数留在 stat 里，监听结束时原样报出来 —— 这样
+       * 「对方根本没发声」和「发了但我解不出」一眼能分开。 */
+      var d = new Ultra.StreamDecoder(ctx.sampleRate, Ultra.bandByKey(ACK_BAND), ACK_SP);
+      var maxHits = 0;
+      d.onPacket = function (p) {
+        var pl = Ultra.parsePayload(p);
+        if (pl && pl.type === 'ack') ackGot = pl;
+      };
+      d.onError = function (kind) { if (kind === 'sync' && d.lastHits > maxHits) maxHits = d.lastHits; };
+      ackDec = [d];
+      ackProc = ctx.createScriptProcessor(4096, 1, 1);
+      ackProc.onaudioprocess = function (ev) {
+        var c = new Float32Array(ev.inputBuffer.getChannelData(0));
+        for (var i = 0; i < ackDec.length; i++) ackDec[i].push(c);
+        ackMeter(c);
+      };
+      ackStat = function () {
+        return { sync: d.stat.sync, crc: d.stat.crc, pk: d.stat.pk, maxHits: maxHits, hits: d.lastHits };
+      };
+      ackSrc = ctx.createMediaStreamSource(stream);
+      ackSrc.connect(ackProc);
+      ackProc.connect(ctx.destination);
+      ackBusy = false;
+      return stream;
+    }).catch(function (e) {
+      ackBusy = false;
+      ackDead = true;
+      throw e;
+    });
+  }
+
+  function ackListen(ms, done) {
+    ackGot = null;
+    ackMeterReset();
+    ackOpen().then(function () {
+      setTimeout(function () {
+        var st = ackStat ? ackStat() : null;
+        var peakDb = ackLastDb, peakF = ackLastF;
+        ackMeterOff();
+        if (!ackGot && st) {
+          log('回执监听结果：一个都没解出｜最强 18.1k 信号 ' + (peakDb > 0 ? '+' + peakDb.toFixed(0) : peakDb.toFixed(0)) +
+            ' dB@' + (peakF || '—') + '｜同步失败 ' + st.sync + '、CRC 失败 ' + st.crc +
+            '、最好同步命中 ' + st.maxHits + '/8、解出 ' + st.pk +
+            (peakDb > 6 ? '（听得到回执音但解不开：频率偏移/回声，让对端也做一次自动校正）'
+              : '（18.1k 基本没能量：手机压根没发回执，或手机回执音量被压到静默、距离太远）'), '#b4791f');
+        }
+        done(ackGot);
+      }, ms);
+    }).catch(function (e) {
+      ackMeterOff();
+      log('开麦失败（无法收回执）：' + (e && e.name ? e.name : e) +
+        '。麦克风被别的应用/标签页占着，或系统没给权限 —— 关掉它们再试，或改成「不等（盲发）」', '#c0392b');
+      done(null);
+    });
+  }
+
+  function sendReliable(packets, onProgress, onDone) {
+    var tok = ++sendSeq;                 // 每次发送一个令牌：旧链的回调一律作废，不许再往下跑
+    var round = 1, MAX_ROUNDS = 6;
+    var pending = [];
+    for (var i = 0; i < packets.length; i++) pending.push(i);
+    function alive() { return tok === sendSeq; }
+
+    function transmit(list, after) {
+      var j = 0;
+      (function one() {
+        if (!alive()) return;
+        if (j >= list.length) { setTimeout(after, 200); return; }
+        var idx = list[j++];
+        var b = txBandAt(round - 1 + idx);
+        onProgress && onProgress(idx, packets.length, round);
+        markTx(b, true);
+        var pkt = Ultra.buildPacket(packets[idx]);
+        /* 每次发送的第一包前面自动播 5 轮标尺音（约 0.96 秒）：
+         * 收端听到这段就把本链路的频率缩放量出来，不需要任何人去点「校正」。 */
+        if (round === 1 && j === 1) {
+          log('发送前自动播标尺音 0.96s（对端听到即自动校准）');
+          tx.sendCal(pkt, b, symMs, 5, function () { setTimeout(one, 150); });
+        } else {
+          tx.send(pkt, b, symMs, function () { setTimeout(one, 150); });
+        }
+      })();
+    }
+
+    function finish(ok, why) {
+      sending = false;
+      ackClose();                       // 收工就放麦，别把麦克风一直占着
+      if (why) log(why, ok ? '#0a5f4f' : '#b4791f');
+      if (onDone) onDone(ok);
+    }
+    function loop() {
+      if (!alive()) return;
+      if (!pending.length) { finish(true, '对方已确认收齐（' + round + ' 轮）'); return; }
+      if (round > MAX_ROUNDS) { finish(false, '回执补包到上限，还剩 ' + pending.length + ' 包未确认'); return; }
+      if (ackDead || !waitAckOn) {
+        // 没有回执通道：剩下的按轮发铺 repeats 遍，别在这里空耗 6 轮
+        log('没有回执通道，改成盲发：剩下的包铺 ' + repeats + ' 遍', '#b4791f');
+        var list = pending.slice(), rp = 0;
+        (function blindPass() {
+          if (!alive()) return;
+          if (rp >= repeats) { finish(false); return; }
+          rp++;
+          transmit(list, function () { setTimeout(blindPass, 200); });
+        })();
+        return;
+      }
+      log('第 ' + round + ' 轮发送 ' + pending.length + ' 包' + (round > 1 ? '（补缺）' : ''));
+      transmit(pending, function () {
+        if (!alive()) return;
+        log('等待对方回执…（约 8 秒）');
+        ackListen(8000, function (ack) {
+          if (!alive()) return;
+          if (!ack) { log('没收到回执：这一轮当作全部失败，重发全部', '#b4791f'); round++; loop(); return; }
+          if (ack.total === 0) {
+            log('对方回执「听到了、但一包都没解出」：数据链路没解出来。下一轮发送前会自动重播标尺重新校准', '#b4791f');
+            round++;
+            loop();
+            return;
+          }
+          var miss = ack.missing();
+          log('收到回执 #' + ack.round + '：对方已收 ' + (ack.total - miss.length) + '/' + ack.total +
+            (miss.length ? '，缺 ' + miss.map(function (x) { return x + 1; }).join('、') : '，已齐'), '#0a5f4f');
+          if (!miss.length) { finish(true); return; }
+          pending = miss;
+          round++;
+          loop();
+        });
+      });
+    }
+    loop();
+  }
+
+  /* 盲发模式（不等回执）：A,B,C,A,B,C 逐轮铺，而不是每包连发 N 遍。
+   * 单包越长越容易中途失步（32ms × 183 符号 ≈ 5.9 秒必然挂），逐轮铺能让每包单独成败、互不连累。 */
+  function queuePackets(packets, onProgress, onDone) {
+    var bandIdx = 0;
+    var sent = 0, total = packets.length * repeats;
+    var reps = 0;
+    function round() {
+      if (reps >= repeats) { if (onDone) onDone(); return; }
+      reps++;
+      var i = 0;
+      function one() {
+        if (i >= packets.length) { setTimeout(round, 240); return; }
+        var pkt = packets[i]; i++;
+        sent++;
+        onProgress && onProgress(sent, total);
+        var b = txBandAt(bandIdx++);
+        markTx(b, true);
+        tx.send(Ultra.buildPacket(pkt), b, symMs, function () { setTimeout(one, 160); });
+      }
+      one();
+    }
+    round();
+  }
+
+  function dispatch(packets, onProgress, onDone) {
+    if (sending) { log('上一次发送还没结束（点「立即硬停」可中断）', '#b4791f'); return; }
+    sending = true;
+    var wrap = function (ok) { sending = false; markTxIdle(); if (onDone) onDone(ok); };
+    if (waitAckOn) sendReliable(packets, onProgress, wrap);
+    else queuePackets(packets, onProgress, function () { sending = false; markTxIdle(); if (onDone) onDone(); });
+  }
+
+  return {
+    dbgRows: buildDbgRows,
+    buildUI: function () { buildBandRow(); markTx(band); },
+    role: function (r) {
+      $('panelRx').className = r === 'rx' ? '' : 'hide';
+      $('panelTx').className = r === 'tx' ? '' : 'hide';
+      $('tabRx').className = 'tab' + (r === 'rx' ? ' on' : '');
+      $('tabTx').className = 'tab' + (r === 'tx' ? ' on' : '');
+      if (r === 'tx') ensureCtx();
+    },
+
+    /* 分档/变速逻辑退役：现在只有一个档（18.1k）+ 一个速度（24ms）。
+     * 这两个入口保留，是为了旧按钮/旧调用不出错，点了一律回「已固定单档」。 */
+    pickBand: function () {
+      log('已固定单档：18.1k（18100–19500 Hz），不再分档', '#b4791f');
+      buildBandRow();
+      markTx(band);
+    },
+
+    peer: function () {
+      log('单档模式下不需要选对端设备：18.1k 手机和电脑都收得到', '#b4791f');
+    },
+
+    speed: function () {
+      log('已固定 24ms 一种速度（16/32ms 已下线，减少变量）', '#b4791f');
+      markTx(band);
+    },
+
+    repeat: function (v) {
+      repeats = v;
+      Array.prototype.forEach.call(document.querySelectorAll('[data-rp]'), function (b) {
+        b.className = 'pill' + (parseInt(b.dataset.rp, 10) === v ? ' on' : '');
+      });
+    },
+
+    chunk: function (v) {
+      chunkBytes = v;
+      Array.prototype.forEach.call(document.querySelectorAll('[data-cb]'), function (b) {
+        b.className = 'pill' + (parseInt(b.dataset.cb, 10) === v ? ' on' : '');
+      });
+      var secs = ((9 + 3 * (v + 4)) * symMs / 1000).toFixed(1);
+      $('chunkNote').textContent = '每包 ' + v + ' 字节 ≈ ' + symMs + 'ms 下 ' + secs +
+        ' 秒一包。包越短越抗中途失步，中文（一个字 3 字节）尤其要短。';
+      log('每包载荷 ' + v + ' 字节（约 ' + secs + ' 秒/包）');
+      markTx(band);
+    },
+
+    waitAck: function (on) {
+      waitAckOn = !!on;
+      Array.prototype.forEach.call(document.querySelectorAll('[data-wa]'), function (b) {
+        b.className = 'pill' + (parseInt(b.dataset.wa, 10) === (on ? 1 : 0) ? ' on' : '');
+      });
+      log(on ? '可靠发送：开（发完开麦等对方回执，只补缺包）' : '盲发：每包轮发 ' + repeats + ' 遍，不等回执');
+    },
+
+    ackReply: function (on) {
+      ackReplyOn = !!on;
+      Array.prototype.forEach.call(document.querySelectorAll('[data-ar]'), function (b) {
+        b.className = 'pill' + (parseInt(b.dataset.ar, 10) === (on ? 1 : 0) ? ' on' : '');
+      });
+      log(on ? '自动回执：开（缺包时自动回一段位图，18.1k/16ms）' : '自动回执：关');
+    },
+
+    gain: function (v) {
+      var g = Ultra.setGain(v);
+      Array.prototype.forEach.call(document.querySelectorAll('[data-gn]'), function (b) {
+        b.className = 'pill' + (parseFloat(b.dataset.gn) === v ? ' on' : '');
+      });
+      log('发送音量 ' + g.toFixed(2));
+    },
+
+    /* 想让人耳听不到，唯一有效的旋钮是「幅度」：失真随幅度按平方/立方掉。
+     * 代价是能量少了，用更长的符号补回来。 */
+    /* 循环发同一个短包，给对端的「一键自动校正」当靶子用；再点一次停。
+     * 停止必须用标志位：tx.send 的回调会在停止之后才触发，只看 timer 会被它重新续上。 */
+    loopCal: function () {
+      var btn = $('btnLoop');
+      if (loopOn) {
+        loopOn = false;
+        clearTimeout(loopTimer);
+        loopTimer = null;
+        if (tx) tx.stop();                       // 硬停：连正在放的那一段也掐掉
+        markTxIdle();
+        btn.textContent = '循环发校准包';
+        $('loopCnt').textContent = '已停（共发 ' + loopN + ' 次）';
+        log('循环校准包已停，共 ' + loopN + ' 次');
+        return;
+      }
+      ensureCtx();
+      loopOn = true;
+      loopN = 0;
+      btn.textContent = '停止循环（正在发…）';
+      var pkt = Ultra.buildPacket(Ultra.chunkText('CAL', 8)[0]);
+      var idx = 0;
+      function step() {
+        if (!loopOn) return;
+        var b = autoBand ? Ultra.BANDS[idx++ % Ultra.BANDS.length] : band;
+        loopN++;
+        $('loopCnt').textContent = '已发 ' + loopN + ' 次 · ' + b.name + '/' + symMs + 'ms';
+        tx.send(pkt, b, symMs, function () {
+          if (!loopOn) return;                    // 停止之后不再续
+          loopTimer = setTimeout(step, 200);
+        });
+      }
+      step();
+      log('开始循环发校准包：' + band.name + ' · ' + symMs + 'ms');
+    },
+
+    /* 一键硬停：循环、长包、探测音全部掐掉。用户按「停」就该立刻没声音。 */
+    stopAll: function () {
+      loopOn = false;
+      clearTimeout(loopTimer); loopTimer = null;
+      sendSeq++;                 // 作废所有在跑的发送链
+      sending = false;
+      ackDead = false;           // 下次发送重新试一次麦
+      ackClose();
+      if (tx) tx.stop();
+      markTxIdle();
+      $('btnLoop').textContent = '循环发校准包';
+      $('btnProbe').disabled = false;
+      $('btnSend').disabled = false;
+      $('btnSendFile').disabled = false;
+      log('已硬停：所有正在发送的声音都掐断了');
+    },
+
+    /* 发端要开麦收回执，麦克风能不能开直接决定 ARQ 有没有用。先测一下再发，省得白等 4.5 秒 ×6 轮。 */
+    testMic: function () {
+      Ultra.openMic().then(function (s) {
+        s.getTracks().forEach(function (t) { t.stop(); });
+        ackDead = false;
+        log('回执麦克风可用：ARQ 通道没问题', '#0a5f4f');
+      }).catch(function (e) {
+        ackDead = true;
+        log('回执麦克风打不开：' + (e && e.name ? e.name : e) +
+          ' → 先关掉别的占用麦克风的应用/标签页，或改用「不等（盲发）」', '#c0392b');
+      });
+    },
+
+    /* 回执自检：接收端这边一直循环播一个回执包，让发端去听。
+     * 这条链路单独验，不用先发数据，省得把「回执没通」和「数据没通」混在一起。 */
+    loopAck: function (on) {
+      ensureCtx();
+      if (ackLoopTimer) { clearInterval(ackLoopTimer); ackLoopTimer = null; }
+      if (on === false) return;
+      ackLoopAt = 0;
+      ackLoopTick();
+      ackLoopTimer = setInterval(ackLoopTick, 500);
+      $('ackLoopCnt').textContent = '正在循环发回执 · 18.1k/24ms · 每 1.5 秒一次';
+      log('开始循环发回执测试包（' + Ultra.bandByKey(ACK_BAND).name + '/' + ACK_SP + 'ms）');
+    },
+
+    /* 发端的回执自检：只听 8 秒，然后把「同步命中/CRC/解出」三个数原样报出来 */
+    testAck: function () {
+      ensureCtx();
+      ackDead = false;
+      log('回执自检：开始听 8 秒（' + Ultra.bandByKey(ACK_BAND).name + '/' + ACK_SP + 'ms）');
+      ackGot = null;
+      ackOpen().then(function () {
+        setTimeout(function () {
+          var st = ackStat ? ackStat() : null;
+          if (ackGot) {
+            log('✓ 收到回执：解出 ' + ackGot.total + ' 包位图，缺 ' + ackGot.missing().length + ' 包', '#0a5f4f');
+          } else {
+            log('✗ 没收到回执｜同步失败 ' + (st ? st.sync : '?') + '、CRC 失败 ' + (st ? st.crc : '?') +
+              '、最好同步命中 ' + (st ? st.maxHits : '?') + '/8', '#c0392b');
+            log('判读：同步命中 0 → 那边压根没在发（或音量太小/太远）；命中 5–7 但 CRC 挂 → 频率偏了；两者都有 → 回执链路本身可用，问题在时序',
+              '#b4791f');
+          }
+          ackClose();
+        }, 8000);
+      }).catch(function (e) {
+        log('开麦失败：' + (e && e.name ? e.name : e), '#c0392b');
+      });
+    },
+
+    /* 自听：一边发探测音，一边用本机麦克风收自己，分别量「可听带 0–16k」和「超声带 17.8k+」的峰值。
+     * 这样「到底有没有人耳能听到的成分」是数字，不是感觉。 */
+    selfListen: function () {
+      ensureCtx();
+      var self = this;
+      Ultra.openMic().then(function (stream) {
+        var an = ctx.createAnalyser();
+        an.fftSize = 8192;
+        an.smoothingTimeConstant = 0;
+        var src = ctx.createMediaStreamSource(stream);
+        src.connect(an);
+        var bins = new Float32Array(an.frequencyBinCount);
+        var bw = ctx.sampleRate / an.fftSize;
+        var peakAud = -200, peakUs = -200, floorAud = -200;
+        function scan() {
+          an.getFloatFrequencyData(bins);
+          for (var i = 0; i < bins.length; i++) {
+            var f = i * bw, v = bins[i];
+            if (f > 50 && f < 16000) { if (v > peakAud) peakAud = v; }
+            else if (f > 17800 && f < 24000) { if (v > peakUs) peakUs = v; }
+          }
+        }
+        var iv = setInterval(scan, 40);
+        setTimeout(function () {                 // 先量 0.6 秒底噪
+          floorAud = peakAud; peakAud = -200; peakUs = -200;
+          log('自听：底噪量完（可听带最高 ' + floorAud.toFixed(1) + ' dB），开始发探测音…');
+          tx.probe(band, 1400, function () {});
+        }, 600);
+        setTimeout(function () {
+          clearInterval(iv);
+          try { src.disconnect(); } catch (e) {}
+          stream.getTracks().forEach(function (t) { t.stop(); });
+          var rise = peakAud - floorAud;
+          var msg = '自听结果：超声带 ' + band.name + ' 峰值 ' + peakUs.toFixed(1) + ' dB；' +
+            '可听带(0–16k) 峰值 ' + peakAud.toFixed(1) + ' dB，比底噪高 ' + rise.toFixed(1) + ' dB';
+          log(msg, rise > 6 ? '#b4791f' : '#0a5f4f');
+          log(rise > 6
+            ? '→ 确实有可听成分：多半是扬声器非线性/瞬态，可把音量降到 0.35 再测'
+            : '→ 可听带几乎没抬起来：说明发出去的基本是纯超声，你听到的可能是从扬声器/功放漏出的杂音，或机械振动',
+            rise > 6 ? '#b4791f' : '#0a5f4f');
+        }, 2600);
+      }).catch(function (e) {
+        log('自听失败（开不了麦克风）：' + e, '#c0392b');
+      });
+    },
+
+    quietPreset: function () {
+      this.gain(0.35);
+      this.repeat(3);
+      log('静音优先：音量 0.35 + 每包 3 遍（速度固定 24ms，不可调）');
+    },
+
+    /* 22.3k 档已下线（电脑麦克风根本收不到），这里只保留「压音量」的语义。 */
+    quietTop: function () {
+      this.gain(0.35);
+      this.repeat(3);
+      log('已压到音量 0.35：频段仍固定 18.1k（22.3k 已下线，电脑收不到）', '#b4791f');
+    },
+
+    diagClear: function () {
+      diagLines = [];
+      var box = $('diagBox');
+      if (box) box.value = '（空）';
+      $('diagCnt').textContent = '0 行';
+    },
+
+    diagSelect: function () {
+      var box = $('diagBox');
+      if (!box) return;
+      if (box.value === '（空）') box.value = diagLines.join('\n');
+      box.focus();
+      box.select();
+      try { box.setSelectionRange(0, box.value.length); } catch (e) {}
+      log('已全选 ' + diagLines.length + ' 行，长按/右键复制即可');
+    },
+
+    diagCopy: function () {
+      var self = App;
+      var s = diagText();
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(s).then(
+          function () { log('诊断日志已复制 ' + diagLines.length + ' 行'); },
+          function () { self.diagSelect(); }
+        );
+      } else {
+        self.diagSelect();
+        log('这浏览器不给自动复制，已全选，长按/右键复制');
+      }
+    },
+
+    autoCal: function () {
+      if (!running) {
+        // 还没开监听就直接开，然后等 1.2 秒让缓冲填起来再校（收端要 0.4 秒音频才够量）
+        this.startRx();
+        setTimeout(function () { if (running) autoCalNow(); else log('麦克风没起来，先点「开始监听」', '#c0392b'); }, 1200);
+        return;
+      }
+      autoCalNow();
+    },
+
+    calStop: function () {
+      clearTimeout(Cal.timer);
+      Cal.running = false;
+      calMuteAll(null);
+      $('btnCal').disabled = false;
+      $('btnCalStop').disabled = true;
+      $('calStat').textContent = '已停止（未应用结果）';
+      log('自动校正已停止');
+    },
+
+    calSelect: function () {
+      var box = $('calOut');
+      if (!box) return;
+      box.focus();
+      box.select();
+      try { box.setSelectionRange(0, box.value.length); } catch (e) {}
+      log('报告已全选，长按/右键复制');
+    },
+
+    calCopy: function () {
+      var s = $('calOut').value || '';
+      if (!s || s === '（未校正）') { log('还没有报告，先跑一次校正'); return; }
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(s).then(
+          function () { log('报告已复制'); },
+          function () { App.calSelect(); }
+        );
+      } else { App.calSelect(); }
+    },
+
+    calib: function (permille) {
+      var k = permille ? 1 + permille / 1000 : 0;   // ±1.0% 对应 ±10‰
+      Ultra.setForcedScale(k || 0);
+      decoders.forEach(function (d) {
+        d.forceScale = k || null;
+        d.fScale = k || 1;
+      });
+      $('vCal').textContent = permille ? (permille > 0 ? '+' : '') + permille.toFixed(1) + '‰' : '自动';
+      $('rCal').value = permille || 0;
+      log(permille ? ('频率校准 ' + permille.toFixed(1) + '‰') : '频率校准回到自动');
+    },
+
+    startRx: function () {
+      if (running || rxPending) return;          // 连点两次会并发开麦，安卓上直接卡死
+      rxPending = true;
+      Ultra.openMic().then(function (stream) {
+        micStream = stream;
+        ensureCtx();
+        makeDecoders(ctx.sampleRate);
+        proc = ctx.createScriptProcessor(8192, 1, 1);
+        var src = ctx.createMediaStreamSource(stream);
+        var saveMode = false, chunkN = 0, qBytes = 0;
+        /* 音频回调里只做「入队 + 计账」，绝不做解码。
+         * 以前解码直接在 onaudioprocess 里跑，手机 CPU 一慢，回调被占住 → 浏览器丢麦克风采样
+         * （真机只剩 60%），严重时整个页面卡死、连监听都点不动。现在解码交给下面的泵。 */
+        proc.onaudioprocess = function (ev) {
+          var chunk = new Float32Array(ev.inputBuffer.getChannelData(0));
+          chunkN++;
+          rxTotal += chunk.length;
+          if (!rxT0) rxT0 = performance.now();
+          try {
+            rxQueue.push(chunk);
+            qBytes += chunk.length;
+            var cap = ctx.sampleRate * 4;                 // 最多压 4 秒，再多就丢最旧的
+            while (qBytes > cap && rxQueue.length > 1) { qBytes -= rxQueue.shift().length; }
+            if (qBytes > ctx.sampleRate * 2 && !qWarned) {
+              qWarned = true;
+              log('解码跟不上：已积压 2 秒音频，先丢最旧的保实时', '#b4791f');
+            }
+          } catch (e) { /* 入队都失败就什么都不做，别让回调抛异常 */ }
+          if (chunkN % 2 === 1) meterTickLite(chunk);       // 界面只读最后一块，很便宜
+        };
+        src.connect(proc);
+        proc.connect(ctx.destination);
+        /* 解码泵：与音频回调解耦，每 6ms 消化一块，UI 永远不会被它卡住。 */
+        rxQueue = []; qBytes = 0; qWarned = false;
+        if (rxPump) clearInterval(rxPump);
+        rxPump = setInterval(function () {
+          if (!running) return;
+          var budget = rxQueue.length > 8 ? 2 : 1;         // 一次只啃一块，绝不把主线程吃满（回调也跑在主线程）
+          while (budget-- > 0 && rxQueue.length) {
+            var c = rxQueue.shift();
+            qBytes -= c.length;
+            if (qBytes < 0) qBytes = 0;
+            try {
+              if (!gateFaulted) gateProbe(c);
+              var blind = gateFaulted || gateBlind();
+              for (var i = 0; i < decoders.length; i++) {
+                var d = decoders[i];
+                if (d.muted) continue;
+                if (!blind && !gateOn[d.band.key]) continue;
+                d.push(c);
+              }
+            } catch (e) {
+              if (!gateFaulted) { gateFaulted = true; log('门控报错，已关闭门控直接全档解码：' + (e && e.message ? e.message : e), '#b4791f'); }
+            }
+          }
+        }, 6);
+        running = true;
+        rxPending = false;
+        rxTotal = 0; rxT0 = 0; dropWarned = false;
+        $('btnMic').disabled = true;
+        $('btnStop').disabled = false;
+        $('stSr').textContent = ctx.sampleRate + ' Hz';
+        if ($('dSr')) $('dSr').textContent = ctx.sampleRate + ' Hz';
+        try {
+          var trk = stream.getAudioTracks()[0];
+          var set = trk && trk.getSettings ? trk.getSettings() : {};
+          if ($('dMic')) $('dMic').textContent = (set.sampleRate ? set.sampleRate + ' Hz' : '未知') +
+            (set.channelCount ? ' · ' + set.channelCount + 'ch' : '');
+        } catch (e) { if ($('dMic')) $('dMic').textContent = '未知'; }
+        buildDbgRows();
+        setState('监听中', true);
+        log('开始监听 · ' + ctx.sampleRate + ' Hz · ' + decoders.length + ' 个解码器（按能量门控只跑有声音的那档）');
+        if (ctx.sampleRate < 48000) log('注意：设备只给到 ' + ctx.sampleRate + ' Hz，20.5k 档接近奈奎斯特，可能解不出，建议用 18.1k 档', '#b4791f');
+      }).catch(function (e) {
+        rxPending = false;
+        log('麦克风打不开：' + (e && e.message ? e.message : e), '#c0392b');
+        setState('麦克风被拒', false);
+        try { $('btnMic').disabled = false; } catch (e2) {}
+      });
+    },
+
+    stopRx: function () {
+      running = false;
+      if (rxPump) { clearInterval(rxPump); rxPump = null; }
+      rxQueue = [];
+      if (proc) { try { proc.disconnect(); } catch (e) {} proc = null; }
+      if (micStream) { micStream.getTracks().forEach(function (t) { t.stop(); }); micStream = null; }
+      $('btnMic').disabled = false;
+      $('btnStop').disabled = true;
+      setState('已停止', false);
+      log('停止监听');
+    },
+
+    clearAll: function () {
+      textState = { total: 0, parts: {} };
+      fileState = null;
+      $('outText').textContent = '（空）';
+      $('fileBox').className = 'hide';
+      $('log').innerHTML = '';
+      ['stPk', 'stSync', 'stCrc'].forEach(function (id) { $(id).textContent = '0'; });
+    },
+
+    probe: function () {
+      ensureCtx();
+      $('btnProbe').disabled = true;
+      log('发探测音 ' + band.name + ' · 1.2s');
+      markTx(band);
+      tx.probe(band, 1200, function () {
+        $('btnProbe').disabled = false;
+        log('探测音结束');
+      });
+    },
+
+    /* 校准阶段：连发 3 个最短的包，让对方先锁上、估准频率补偿，
+     * 之后正式内容才不会整包报废。没有反向信道，所以用「同向多铺几遍」代替握手。 */
+    calibrate: function () {
+      ensureCtx();
+      var pkts = [];
+      for (var i = 0; i < 3; i++) pkts.push(Ultra.chunkText('CAL', 8)[0]);
+      $('btnProbe').disabled = true;
+      log('校准：' + band.name + ' · ' + symMs + 'ms · 3 个短包');
+      queuePackets(pkts, null, function () {
+        $('btnProbe').disabled = false;
+        log('校准包发完，让对方看「自动 ×1.0…」是不是已经跳开 1.0000');
+      });
+    },
+
+    sendText: function () {
+      var s = $('txt').value;
+      if (!s) { log('没内容'); return; }
+      ensureCtx();
+      var chunks = Ultra.chunkText(s, chunkBytes);
+      $('btnSend').disabled = true;
+      log('开始发送 ' + s.length + ' 字 · ' + chunks.length + ' 包（每包 ' + chunkBytes + ' B）· ' +
+        band.name + ' · ' + symMs + 'ms · ' + (waitAckOn ? '等回执补包' : '每包轮发 ' + repeats + ' 遍'));
+      dispatch(chunks, function (i, n) {
+        $('txtProg').style.width = Math.round(i / n * 100) + '%';
+        $('txtInfo').textContent = i + '/' + n + ' 包';
+      }, function (ok) {
+        $('btnSend').disabled = false;
+        if (ok === true) $('txtProg').style.width = '100%';
+        log(ok === false ? '发送结束（有未确认包的备份：可以让对方再点一次）' : '发送完成');
+      });
+    },
+
+    pickFile: function (inp) {
+      var f = inp.files && inp.files[0];
+      $('btnSendFile').disabled = true;
+      if (!f) return;
+      if (f.size > 8 * 1024) { log('文件超过 8 KB，超声传不动', '#c0392b'); return; }
+      $('fileSendInfo').textContent = f.name + ' · ' + f.size + ' B · 约 ' + Math.max(1, Math.round(f.size / 18)) + ' 秒（不含重复）';
+      $('btnSendFile').disabled = false;
+    },
+
+    sendFile: function () {
+      var f = $('file').files && $('file').files[0];
+      if (!f) return;
+      ensureCtx();
+      var reader = new FileReader();
+      reader.onload = function () {
+        var u8 = new Uint8Array(reader.result);
+        var total = Math.ceil(u8.length / chunkBytes);
+        var pkts = [Ultra.fileHead(f.name, u8.length, total)];
+        for (var i = 0; i < total; i++) pkts.push(Ultra.fileChunk(u8, i, total, chunkBytes));
+        $('btnSendFile').disabled = true;
+        log('发送文件 ' + f.name + ' · ' + total + ' 块（每块 ' + chunkBytes + ' B）');
+        dispatch(pkts, function (i, n) {
+          $('fileSendProg').style.width = Math.round(i / n * 100) + '%';
+          $('fileSendInfo').textContent = i + '/' + n + ' 块';
+        }, function () {
+          $('btnSendFile').disabled = false;
+          log('文件发送完成');
+        });
+      };
+      reader.readAsArrayBuffer(f);
+    }
+  };
+})();
+
+App.speed(24);
+App.repeat(1);
+App.chunk(16);
+(function init() {
+  // 版本自检：内核还是旧的（被缓存）时会缺档，直接说出来，省得以为功能没做
+  if (Ultra.BANDS.length < 3) {
+    log('内核还是旧版（只有 ' + Ultra.BANDS.length + ' 档）：强制刷新页面（长按刷新 / 清缓存）', '#c0392b');
+  }
+  // 上次校正的结果直接带上，省得每次重来
+  try {
+    var saved = JSON.parse(localStorage.getItem('ultra-calib') || 'null');
+    if (saved && saved.scale) {
+      Ultra.setForcedScale(saved.scale);
+      decoders.forEach(function (d) { d.forceScale = saved.scale; d.fScale = saved.scale; });
+      log('沿用上次校正：' + (saved.band || '?') + '/' + (saved.sp || '?') + 'ms ×' + saved.scale.toFixed(4));
+      if ($('calOut')) $('calOut').value = '（沿用上次校正）' + (saved.band || '') + '/' + (saved.sp || '') + 'ms ×' + saved.scale.toFixed(4);
+    }
+  } catch (e) {}
+  App.buildUI();          // 频段按钮 + 能量条都由这一处统一生成，避免两套 UI 各写一遍
+  var f = document.getElementById('txt');
+  f.addEventListener('input', function () {
+    var n = f.value.length;
+    document.getElementById('txtInfo').textContent = n ? (n + ' 字 · 约 ' + Math.max(1, Math.round(n / 16)) + ' 秒') : '';
+  });
+  document.getElementById('rCal').addEventListener('input', function () { App.calib(+this.value * 10); });
+  App.dbgRows();
+})();
+</script>
+
+
+</body></html>
+[I] <mmkv.cpp:165::initialize> version v1.2.13, page size 4096, arch x86_64
+[I] <mmkv.cpp:207::initializeMMKV> root dir: C:\Program Files (x86)\Common Files\NSEC\Data\KVDB
+[I] <memoryfile_win32.cpp:76::open> open fd[0000000000000444], C:\Program Files (x86)\Common Files\NSEC\Data\KVDB\DES_192.168.1.201
+[I] <memoryfile_win32.cpp:76::open> open fd[000000000000044C], C:\Program Files (x86)\Common Files\NSEC\Data\KVDB\DES_192.168.1.201.crc
+[I] <mmkv_io.cpp:81::loadFromFile> loading [DES_192.168.1.201] with 0 actual size, file size 4096, InterProcess 1, meta info version:1
+[I] <mmkv_io.cpp:130::loadFromFile> loaded [DES_192.168.1.201] with 0 key-values
+[I] <mmkv.cpp:165::initialize> version v1.2.13, page size 4096, arch x86_64
+[I] <mmkv.cpp:207::initializeMMKV> root dir: C:\Program Files (x86)\Common Files\NSEC\Data\KVDB
+[I] <memoryfile_win32.cpp:76::open> open fd[00000000000003B4], C:\Program Files (x86)\Common Files\NSEC\Data\KVDB\DES_192.168.1.201
+[I] <memoryfile_win32.cpp:76::open> open fd[00000000000003BC], C:\Program Files (x86)\Common Files\NSEC\Data\KVDB\DES_192.168.1.201.crc
+[I] <mmkv_io.cpp:81::loadFromFile> loading [DES_192.168.1.201] with 0 actual size, file size 4096, InterProcess 1, meta info version:1
+[I] <mmkv_io.cpp:130::loadFromFile> loaded [DES_192.168.1.201] with 0 key-values

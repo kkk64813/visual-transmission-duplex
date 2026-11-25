@@ -150,9 +150,9 @@
       <summary>自检 · 高级</summary>
       <div class="body">
         <div class="row">
-          <button class="primary" id="btnCal" onclick="App.autoCal()">一键自动校正</button>
+          <button class="primary" id="btnCal" onclick="App.autoCal()">立即重校（自动测量）</button>
           <button id="btnCalStop" onclick="App.calStop()" disabled>停止</button>
-          <span class="hint" id="calStat" style="margin:0">未开始</span>
+          <span class="hint" id="calStat" style="margin:0">每次发送前会自动校，不用按</span>
         </div>
         <div class="hint" style="margin-top:6px">让对方点「循环发校准包」，这边点上面的按钮：3 档频带 × 3 种符号长度挨个试，再把最能过的那组应用。</div>
         <textarea id="calOut" class="out" readonly style="font-size:11px;line-height:1.5;height:150px;width:100%;overflow:auto;white-space:pre;resize:vertical;font-family:ui-monospace,Menlo,Consolas,monospace;margin-top:8px">（未校正）</textarea>
@@ -302,11 +302,11 @@
 
 
 <footer>
-  纯本地：声音只在空气里走，不经过网络。 版本 v2026-11-25t（单档 18.1k + 单速 24ms · 1 个解码器 · 零回执 · 解码泵）返回 <a href="./index.html">首页</a> ·
+  纯本地：声音只在空气里走，不经过网络。 版本 v2026-11-25u（每次发送前自动标尺校准 · 一次频谱测量 · 单档 18.1k/24ms）返回 <a href="./index.html">首页</a> ·
   双工控制通道见 <a href="./duplex.html">duplex</a>
 </footer>
 
-<script src="ultra-core.js?v=20261125t"></script>
+<script src="ultra-core.js?v=20261125u"></script>
 <script>
 var App = (function () {
   /* ===== 单档单速（2026-11-25 起）=====
@@ -326,7 +326,8 @@ var App = (function () {
   function txBandAt() { return band; }
   var ackReplyOn = true;           // 接收端：缺包时自动回执
   var waitAckOn = true;            // 发送端：等回执再补包
-  var lastPktAt = 0, lastAckAt = 0, ackRound = 0;
+  var lastPktAt = 0, lastAckAt = 0, ackRound = 0, lastCalAt = 0;
+  function now() { return performance.now ? performance.now() : Date.now(); }
   var ackDec = null, ackProc = null, ackSrc = null, ackMic = null, ackBusy = false, ackDead = false;
   var loopTimer = null, loopN = 0, loopOn = false; // 循环发校准包
   var symMs = ONE_SP, repeats = 2;
@@ -881,6 +882,59 @@ var App = (function () {
     updateDbg();
     maybeAck();
     maybeZeroAck();
+    /* 自动校准：监听中、且已经 0.7 秒没解出过任何包，就自己量一次频率 ——
+     * 不用人按按钮。对端每次发送前都会先播标尺音，正好给这一步提供干净的素材。
+     * 节流 0.9 秒一次；量不通就保持原值（不用噪声去「校」出个偏移）。 */
+    if (running && now() - lastCalAt > 900 && now() - lastPktAt > 700) {
+      lastCalAt = now();
+      autoCalSilent();
+    }
+  }
+
+  /* 自动校准（静默版）：只在结果真的把同步头对上了、且偏移有明显变化时才写日志，
+   * 避免刷屏；结果同时更新「自动 ×1.00xx」那一栏。 */
+  /* 立即重校（也用于按钮）：一次频谱测量 + 同步头验证，约 1 秒出结果。
+   * 不再是以前那套「17 格 × 每格等 1.2 秒」的盲扫 —— 那套要多按、要等 20 秒、还会被人按错。 */
+  function autoCalNow() {
+    if (!decoders.length) { log('还没开监听：先点「开始监听」', '#b4791f'); return; }
+    var d = decoders[0];
+    var sr = ctx ? ctx.sampleRate : 48000;
+    if (d.fill < Math.round(sr * 0.42)) { log('音频还不够 0.4 秒，先让对方发一段标尺/数据', '#b4791f'); return; }
+    var prev = d.fScale;
+    var c = d.autoCalibrate(420);
+    if (!c) { log('重校：音频太短，跳过', '#b4791f'); return; }
+    if (c.ok) {
+      log('重校完成：×' + c.scale.toFixed(4) + '（同步命中 ' + c.hits + '/8，粗测 ×' + c.measured.toFixed(4) +
+        (Math.abs(c.scale - prev) > 2e-4 ? '，原 ×' + prev.toFixed(4) : '，与原值一致') + '）', '#0a5f4f');
+      onCalApplied(c);
+      if ($('calStat')) $('calStat').textContent = '已完成 ×' + c.scale.toFixed(4) + ' · 命中 ' + c.hits + '/8';
+    } else {
+      log('重校未通过：同步命中只 ' + c.hits + '/8，保持 ×' + d.fScale.toFixed(4) + ' 不变', '#b4791f');
+      if ($('calStat')) $('calStat').textContent = '未通过（命中 ' + c.hits + '/8）';
+    }
+  }
+
+  function autoCalSilent() {
+    if (!decoders.length) return;
+    var d = decoders[0];
+    if (d.fill < Math.round((ctx ? ctx.sampleRate : 48000) * 0.42)) return;
+    var prev = d.fScale;
+    var c = d.autoCalibrate(420);
+    if (!c) return;
+    if (c.ok) {
+      if (Math.abs(c.scale - prev) > 0.0015) {
+        log('自动校准：×' + c.scale.toFixed(4) + '（同步命中 ' + c.hits + '/8，粗测 ×' + c.measured.toFixed(4) + '）', '#0a5f4f');
+        onCalApplied(c);
+      }
+    } else if (d.triedCal !== prev) {
+      d.triedCal = prev;
+      log('自动校准没通过：同步命中只 ' + c.hits + '/8，先不改（等标尺音或让对端发一段）', '#b4791f');
+    }
+  }
+
+  function onCalApplied(c) {
+    if ($('calStat') && !Cal.running) $('calStat').textContent = '自动 ×' + c.scale.toFixed(4) + ' · 命中 ' + c.hits + '/8';
+    if ($('vCal') && !$('rCal').value) $('vCal').textContent = '自动 ×' + c.scale.toFixed(4);
   }
 
   /* 解码信息表：每个解码器一行（频带 × 符号长度） */
@@ -1101,7 +1155,15 @@ var App = (function () {
         var b = txBandAt(round - 1 + idx);
         onProgress && onProgress(idx, packets.length, round);
         markTx(b, true);
-        tx.send(Ultra.buildPacket(packets[idx]), b, symMs, function () { setTimeout(one, 150); });
+        var pkt = Ultra.buildPacket(packets[idx]);
+        /* 每次发送的第一包前面自动播 5 轮标尺音（约 0.96 秒）：
+         * 收端听到这段就把本链路的频率缩放量出来，不需要任何人去点「校正」。 */
+        if (round === 1 && j === 1) {
+          log('发送前自动播标尺音 0.96s（对端听到即自动校准）');
+          tx.sendCal(pkt, b, symMs, 5, function () { setTimeout(one, 150); });
+        } else {
+          tx.send(pkt, b, symMs, function () { setTimeout(one, 150); });
+        }
       })();
     }
 
@@ -1135,7 +1197,7 @@ var App = (function () {
           if (!alive()) return;
           if (!ack) { log('没收到回执：这一轮当作全部失败，重发全部', '#b4791f'); round++; loop(); return; }
           if (ack.total === 0) {
-            log('对方回执「听到了、但一包都没解出」：问题在数据链路本身。把两端都切 18.1k、各做一次自动校正再发', '#b4791f');
+            log('对方回执「听到了、但一包都没解出」：数据链路没解出来。下一轮发送前会自动重播标尺重新校准', '#b4791f');
             round++;
             loop();
             return;
@@ -1451,14 +1513,13 @@ var App = (function () {
     },
 
     autoCal: function () {
-      if (Cal.running) return;
       if (!running) {
-        // 还没开监听就直接开，然后等 1 秒让缓冲填起来再开始扫
+        // 还没开监听就直接开，然后等 1.2 秒让缓冲填起来再校（收端要 0.4 秒音频才够量）
         this.startRx();
-        setTimeout(function () { if (running) calStart(); else log('麦克风没起来，先点「开始监听」', '#c0392b'); }, 1200);
+        setTimeout(function () { if (running) autoCalNow(); else log('麦克风没起来，先点「开始监听」', '#c0392b'); }, 1200);
         return;
       }
-      calStart();
+      autoCalNow();
     },
 
     calStop: function () {
@@ -1510,7 +1571,7 @@ var App = (function () {
         micStream = stream;
         ensureCtx();
         makeDecoders(ctx.sampleRate);
-        proc = ctx.createScriptProcessor(4096, 1, 1);
+        proc = ctx.createScriptProcessor(8192, 1, 1);
         var src = ctx.createMediaStreamSource(stream);
         var saveMode = false, chunkN = 0, qBytes = 0;
         /* 音频回调里只做「入队 + 计账」，绝不做解码。
