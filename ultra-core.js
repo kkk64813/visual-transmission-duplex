@@ -86,6 +86,43 @@ var GAIN = 0.72;          // 默认标准音量：够响，又不至于让喇叭
     return payload;
   }
 
+  /* 回执（反向信道）：接收端用位图告诉发送端「哪些包我已经收到了」。
+   * 载荷 = [T_ACK][round][total u8][nbytes][b0..b(n-1)]，nbytes 最多 16（可覆盖 128 包）。
+   * 反向链路更脆弱，所以只发位图、不发内容，尽量短。 */
+  var T_ACK = 4, ACK_MAX = 128;
+
+  function ackPayload(round, total, have) {
+    var n = Math.ceil(Math.min(total, ACK_MAX) / 8) || 1;
+    var b = new Uint8Array(4 + n);
+    b[0] = T_ACK;
+    b[1] = round & 0xff;
+    b[2] = total & 0xff;
+    b[3] = n;
+    for (var i = 0; i < total && i < ACK_MAX; i++) {
+      if (have(i)) b[4 + (i >> 3)] |= (1 << (i & 7));
+    }
+    return b;
+  }
+
+  function parseAck(payload) {
+    if (!payload || payload[0] !== T_ACK || payload.length < 5) return null;
+    var total = payload[2];
+    var n = Math.min(payload[3] || 1, 16);
+    if (payload.length < 4 + n) return null;
+    var bits = payload.subarray(4, 4 + n);
+    function has(i) { return i < total && (i >> 3) < n && !!(bits[i >> 3] & (1 << (i & 7))); }
+    return {
+      round: payload[1],
+      total: total,
+      has: has,
+      missing: function () {
+        var out = [];
+        for (var i = 0; i < total; i++) if (!has(i)) out.push(i);
+        return out;
+      }
+    };
+  }
+
   /* ---------------- 3 bit / 符号 ---------------- */
   function bytesToSymbols(u8) {
     var out = new Uint8Array(u8.length * 3);
@@ -596,6 +633,11 @@ var GAIN = 0.72;          // 默认标准音量：够响，又不至于让喇叭
     }
     if (t === T_FILE_CHUNK) return { type: 'fileChunk', seq: p[1], total: p[2], data: p.subarray(4) };
     if (t === T_PROBE) return { type: 'probe' };
+    if (t === T_ACK) {
+      var a = parseAck(p);
+      if (a) return { type: 'ack', round: a.round, total: a.total, has: a.has, missing: a.missing };
+      return null;
+    }
     return null;
   }
 
@@ -661,6 +703,7 @@ var GAIN = 0.72;          // 默认标准音量：够响，又不至于让喇叭
     StreamDecoder: StreamDecoder, Tx: Tx, openMic: openMic, makeCtx: makeCtx,
     utf8: utf8, fromUtf8: fromUtf8,
     chunkText: chunkText, joinText: joinText,
+    ackPayload: ackPayload, parseAck: parseAck,
     fileHead: fileHead, fileChunk: fileChunk, parsePayload: parsePayload,
     T_PROBE: T_PROBE, T_TEXT: T_TEXT, T_FILE_HEAD: T_FILE_HEAD, T_FILE_CHUNK: T_FILE_CHUNK,
     bytesPerSecond: bytesPerSecond

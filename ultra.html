@@ -169,6 +169,12 @@
 
     <div class="card">
       <h3>收到的文字</h3>
+      <div class="row" style="margin-bottom:8px">
+        <span class="hint" style="margin:0;flex:none">反向回执</span>
+        <button class="pill on" data-ar="1" onclick="App.ackReply(true)">缺包自动回执</button>
+        <button class="pill" data-ar="0" onclick="App.ackReply(false)">不回执</button>
+      </div>
+      <div class="hint" style="margin-top:0">开着这个，收端在缺包时会自己用 18.1k 播一段 7 字节位图（约 1.3 秒），告诉发端哪些包没到；发端只会补那几包，不用整段重发。</div>
       <div class="out" id="outText">（空）</div>
       <div id="fileBox" class="hide" style="margin-top:10px">
         <div class="hint" id="fileInfo"></div>
@@ -209,6 +215,16 @@
         <button onclick="App.quietPreset()">一键「静音优先」</button>
         <span class="hint" style="margin:0">静默音量 + 32ms 慢速：最不容易被人耳听到的一组</span>
       </div>
+      <div class="row" style="margin-top:6px">
+        <button onclick="App.quietTop()">一键「极静 22.3k」</button>
+        <span class="hint" style="margin:0">直接顶到 22.3k 档（离人耳最远），代价是手机扬声器可能几乎发不出来</span>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <span class="hint" style="margin:0;flex:none">可靠发送</span>
+        <button class="pill on" data-wa="1" onclick="App.waitAck(true)">等对方回执补包</button>
+        <button class="pill" data-wa="0" onclick="App.waitAck(false)">不等（盲发）</button>
+      </div>
+      <div class="hint" style="margin-top:6px">「等对方回执」时会自动开麦收对方的数字回执：对方收齐就停，缺哪包只补哪包，最多来回 6 轮。</div>
       <div class="row" style="margin-top:8px">
         <button id="btnLoop" onclick="App.loopCal()">循环发校准包</button>
         <span class="hint" id="loopCnt" style="margin:0">点一次开始，再点一次停</span>
@@ -226,23 +242,24 @@
     <div class="card">
       <h3>速度与重复</h3>
       <div class="row">
-        <button class="pill on" data-sp="16" onclick="App.speed(16)">快 · 16ms</button>
-        <button class="pill" data-sp="24" onclick="App.speed(24)">稳 · 24ms</button>
+        <button class="pill" data-sp="16" onclick="App.speed(16)">快 · 16ms</button>
+        <button class="pill on" data-sp="24" onclick="App.speed(24)">稳 · 24ms</button>
         <button class="pill" data-sp="32" onclick="App.speed(32)">很稳 · 32ms</button>
       </div>
       <div class="row" style="margin-top:8px">
-        <button class="pill on" data-rp="2" onclick="App.repeat(2)">每包发 2 遍</button>
+        <button class="pill" data-rp="2" onclick="App.repeat(2)">每包发 2 遍</button>
         <button class="pill" data-rp="3" onclick="App.repeat(3)">3 遍</button>
-        <button class="pill" data-rp="1" onclick="App.repeat(1)">1 遍</button>
+        <button class="pill on" data-rp="1" onclick="App.repeat(1)">1 遍</button>
       </div>
       <div class="row" style="margin-top:8px">
         <span class="hint" style="margin:0;flex:none">每包字节</span>
-        <button class="pill" data-cb="16" onclick="App.chunk(16)">16</button>
-        <button class="pill on" data-cb="24" onclick="App.chunk(24)">24</button>
+        <button class="pill" data-cb="8" onclick="App.chunk(8)">8</button>
+        <button class="pill" data-cb="12" onclick="App.chunk(12)">12</button>
+        <button class="pill on" data-cb="16" onclick="App.chunk(16)">16</button>
+        <button class="pill" data-cb="24" onclick="App.chunk(24)">24</button>
         <button class="pill" data-cb="48" onclick="App.chunk(48)">48</button>
-        <button class="pill" data-cb="64" onclick="App.chunk(64)">64</button>
       </div>
-      <div class="hint" id="chunkNote" style="margin-top:6px">每包 24 字节 ≈ 32ms 下 2.9 秒一包。包越短越抗中途失步，中文（一个字 3 字节）尤其要短。</div>
+      <div class="hint" id="chunkNote" style="margin-top:6px">默认 16 字节 ≈ 24ms 下 1.7 秒一包（实测真机 2.6 秒以上的单包几乎必挂）。中文一个字 3 字节，所以中文尤其要短包 + 回执补包。</div>
       <div class="hint" id="speedNote"></div>
     </div>
 
@@ -274,16 +291,23 @@
 </main>
 
 <footer>
-  纯本地：声音只在空气里走，不经过网络。 版本 v2026-11-25g（短包 · 轮发 · 续收补包）返回 <a href="./index.html">首页</a> ·
+  纯本地：声音只在空气里走，不经过网络。 版本 v2026-11-25h（双工回执 · 只补缺包 · 极静 22.3k）返回 <a href="./index.html">首页</a> ·
   双工控制通道见 <a href="./duplex.html">duplex</a>
 </footer>
 
-<script src="ultra-core.js?v=20261125g"></script>
+<script src="ultra-core.js?v=20261125h"></script>
 <script>
 var App = (function () {
   var band = Ultra.BANDS[0];       // 默认 18.1k 实测 18k 听不见
   var autoBand = false;            // 自动档：每发一遍换一档，三档轮流铺
-  var chunkBytes = 24;             // 每包载荷字节：越长越容易中途失步
+  var chunkBytes = 16;             // 每包载荷字节：实测真机单包 >2.5 秒几乎必挂，16B@24ms ≈1.7 秒最稳
+  /* 回执用的频带：跟着「最后一包是从哪档解出来的」走，这样反向链路和正向用同一档，
+   * 呼吸/遮挡条件一致，成功率高得多。没收到过包就退回 18.1k。 */
+  var ackBandKey = 'mid';
+  var ackReplyOn = true;           // 接收端：缺包时自动回执
+  var waitAckOn = true;            // 发送端：等回执再补包
+  var lastPktAt = 0, lastAckAt = 0, ackRound = 0;
+  var ackDec = null, ackProc = null, ackSrc = null, ackMic = null;
   var loopTimer = null, loopN = 0, loopOn = false; // 循环发校准包
   var symMs = 16, repeats = 2;
   var ctx = null, tx = null;
@@ -367,9 +391,30 @@ var App = (function () {
     });
   }
 
-  function inc(id) {
-    var e = $(id);
-    e.textContent = (parseInt(e.textContent, 10) || 0) + 1;
+  /* 接收端回执：缺包且链路安静下来（>0.9 秒没有新包）就发一次位图，每 2 秒重发一次，
+   * 直到收齐或用户按停止。发送端拿到位图只补缺的那几包。 */
+  function maybeAck() {
+    if (!ackReplyOn || !textState.total || !tx || !ctx) return;
+    var miss = [];
+    for (var i = 0; i < textState.total; i++) if (!textState.parts[i]) miss.push(i);
+    if (!miss.length) return;
+    var now = performance.now();
+    if (!lastPktAt || now - lastPktAt < 900) return;
+    if (now - lastPktAt > 15000) return;     // 对方早就不发了，别再自己一直播
+    if (now - lastAckAt < 2000) return;
+    lastAckAt = now;
+    if (ackRound > 200) ackRound = 0;
+    ackRound++;
+    var payload = Ultra.ackPayload(ackRound, textState.total, function (k) { return !!textState.parts[k]; });
+    var pkt = Ultra.buildPacket(payload);
+    var b = Ultra.bandByKey(ackBandKey), n = 0;
+    log('回执 #' + ackRound + '：已收 ' + (textState.total - miss.length) + '/' + textState.total +
+      '，缺第 ' + miss.map(function (x) { return x + 1; }).join('、') + ' 包');
+    (function one() {
+      if (n >= ACK_COPIES) return;
+      n++;
+      tx.send(pkt, b, ACK_SP, function () { setTimeout(one, 260); });
+    })();
   }
 
   /* ---------- 一键自动校正 ----------
@@ -589,14 +634,16 @@ var App = (function () {
 
   function onPacket(payload, b, sp) {
     inc('stPk');
+    if (b && b.key) ackBandKey = b.key;      // 回执跟着「最后成功解出的那一档」走
     var p = Ultra.parsePayload(payload);
     if (!p) return;
     if (p.type === 'text') {
       // 同一段文字再发一次时要「续收」而不是清空重来：缺哪包补哪包，
       // 这就是没有反向信道时的手动 ARQ —— 再点一次发送，缺的几包通常就补上了。
-      if (p.seq === 0 && textState.total !== p.total) textState = { total: p.total, parts: {} };
+      if (p.seq === 0 && textState.total !== p.total) { textState = { total: p.total, parts: {} }; lastAckAt = 0; }
       if (!textState.total) textState = { total: p.total, parts: {} };
       textState.parts[p.seq] = p.data;
+      lastPktAt = performance.now();
       if (Object.keys(textState.parts).length === textState.total) {
         var s = Ultra.joinText(textState.parts, textState.total);
         $('outText').textContent = s || '';
@@ -663,6 +710,7 @@ var App = (function () {
       }
       updateDbg();
     }
+    maybeAck();
   }
 
   /* 解码信息表：每个解码器一行（频带 × 符号长度） */
@@ -736,12 +784,86 @@ var App = (function () {
     return ctx;
   }
 
+  /* ---------- 可靠发送：发一轮 → 开麦收回执 → 只补缺的包 ---------- */
+  function ackListen(ms, done) {
+    var got = null;
+    var stopAll = function () {
+      try { if (ackProc) ackProc.disconnect(); } catch (e) {}
+      try { if (ackSrc) ackSrc.disconnect(); } catch (e) {}
+      if (ackMic) { ackMic.getTracks().forEach(function (t) { t.stop(); }); ackMic = null; }
+      ackProc = null; ackSrc = null;
+    };
+    Ultra.openMic().then(function (stream) {
+      ackMic = stream;
+      ensureCtx();
+      /* 三档都开一个 16ms 解码器：对方用哪一档回执都能收到（自动轮流模式下尤其必要） */
+      var ds = Ultra.BANDS.map(function (b) {
+        var d = new Ultra.StreamDecoder(ctx.sampleRate, b, 16);
+        d.onPacket = function (p) {
+          var pl = Ultra.parsePayload(p);
+          if (pl && pl.type === 'ack') got = pl;
+        };
+        return d;
+      });
+      ackDec = ds;
+      ackProc = ctx.createScriptProcessor(4096, 1, 1);
+      ackProc.onaudioprocess = function (ev) {
+        var c = new Float32Array(ev.inputBuffer.getChannelData(0));
+        for (var i = 0; i < ds.length; i++) ds[i].push(c);
+      };
+      ackSrc = ctx.createMediaStreamSource(stream);
+      ackSrc.connect(ackProc);
+      ackProc.connect(ctx.destination);
+      setTimeout(function () { stopAll(); done(got); }, ms);
+    }).catch(function (e) {
+      log('开麦失败（无法收回执）：' + e, '#c0392b');
+      done(null);
+    });
+  }
+
+  function sendReliable(packets, onProgress, onDone) {
+    var round = 1, MAX_ROUNDS = 6;
+    var pending = [];
+    for (var i = 0; i < packets.length; i++) pending.push(i);
+
+    function transmit(list, after) {
+      var j = 0;
+      (function one() {
+        if (j >= list.length) { setTimeout(after, 200); return; }
+        var idx = list[j++];
+        var b = autoBand ? Ultra.BANDS[(round - 1 + idx) % Ultra.BANDS.length] : band;
+        onProgress && onProgress(idx, packets.length, round);
+        tx.send(Ultra.buildPacket(packets[idx]), b, symMs, function () { setTimeout(one, 150); });
+      })();
+    }
+
+    function loop() {
+      if (!pending.length) { log('对方已确认收齐（' + round + ' 轮）', '#0a5f4f'); if (onDone) onDone(true); return; }
+      if (round > MAX_ROUNDS) { log('回执补包到上限，还剩 ' + pending.length + ' 包未确认', '#b4791f'); if (onDone) onDone(false); return; }
+      log('第 ' + round + ' 轮发送 ' + pending.length + ' 包' + (round > 1 ? '（补缺）' : ''));
+      transmit(pending, function () {
+        if (!waitAckOn) { round++; loop(); return; }
+        log('等待对方回执…（约 4.5 秒）');
+        ackListen(4500, function (ack) {
+          if (!ack) { log('没收到回执：这一轮当作全部失败，重发全部', '#b4791f'); round++; loop(); return; }
+          var miss = ack.missing();
+          log('收到回执 #' + ack.round + '：对方已收 ' + (ack.total - miss.length) + '/' + ack.total +
+            (miss.length ? '，缺 ' + miss.map(function (x) { return x + 1; }).join('、') : '，已齐'), '#0a5f4f');
+          if (!miss.length) { if (onDone) onDone(true); return; }
+          pending = miss;
+          round++;
+          loop();
+        });
+      });
+    }
+    loop();
+  }
+
+  /* 盲发模式（不等回执）：A,B,C,A,B,C 逐轮铺，而不是每包连发 N 遍。
+   * 单包越长越容易中途失步（32ms × 183 符号 ≈ 5.9 秒必然挂），逐轮铺能让每包单独成败、互不连累。 */
   function queuePackets(packets, onProgress, onDone) {
     var bandIdx = 0;
     var sent = 0, total = packets.length * repeats;
-    // 轮着发，而不是每包连发 N 遍：
-    // 单包越长越容易中途失步（32ms × 183 符号 ≈ 5.9 秒必然挂），
-    // 所以这里 A,B,C,A,B,C 逐轮铺 —— 接收端每包只要成一次，「中间断一个」不会连累别的包。
     var reps = 0;
     function round() {
       if (reps >= repeats) { if (onDone) onDone(); return; }
@@ -758,6 +880,11 @@ var App = (function () {
       one();
     }
     round();
+  }
+
+  function dispatch(packets, onProgress, onDone) {
+    if (waitAckOn) sendReliable(packets, onProgress, onDone);
+    else queuePackets(packets, onProgress, onDone);
   }
 
   return {
@@ -809,6 +936,22 @@ var App = (function () {
       log('每包载荷 ' + v + ' 字节（约 ' + secs + ' 秒/包）');
     },
 
+    waitAck: function (on) {
+      waitAckOn = !!on;
+      Array.prototype.forEach.call(document.querySelectorAll('[data-wa]'), function (b) {
+        b.className = 'pill' + (parseInt(b.dataset.wa, 10) === (on ? 1 : 0) ? ' on' : '');
+      });
+      log(on ? '可靠发送：开（发完开麦等对方回执，只补缺包）' : '盲发：每包轮发 ' + repeats + ' 遍，不等回执');
+    },
+
+    ackReply: function (on) {
+      ackReplyOn = !!on;
+      Array.prototype.forEach.call(document.querySelectorAll('[data-ar]'), function (b) {
+        b.className = 'pill' + (parseInt(b.dataset.ar, 10) === (on ? 1 : 0) ? ' on' : '');
+      });
+      log(on ? '自动回执：开（缺包时自动回一段位图，18.1k/16ms）' : '自动回执：关');
+    },
+
     gain: function (v) {
       var g = Ultra.setGain(v);
       Array.prototype.forEach.call(document.querySelectorAll('[data-gn]'), function (b) {
@@ -857,6 +1000,16 @@ var App = (function () {
       this.speed(32);
       this.repeat(3);
       log('静音优先：音量 0.35 + 32ms + 每包 3 遍（慢，但最不吵）');
+    },
+
+    /* 最静一组：直接顶到 22.3k（离人耳最远），音量压到 0.35。
+     * 手机扬声器在 22k 以上效率很低，能过就过，过不了再退回 20.5k。 */
+    quietTop: function () {
+      this.gain(0.35);
+      this.speed(32);
+      this.repeat(3);
+      this.pickBand('top');
+      log('极静：22.3k + 音量 0.35 + 32ms（离人耳最远；若对方完全收不到就退回「自动 · 三档轮流」）');
     },
 
     diagClear: function () {
@@ -1043,14 +1196,14 @@ var App = (function () {
       var chunks = Ultra.chunkText(s, chunkBytes);
       $('btnSend').disabled = true;
       log('开始发送 ' + s.length + ' 字 · ' + chunks.length + ' 包（每包 ' + chunkBytes + ' B）· ' +
-        band.name + ' · ' + symMs + 'ms · 每包轮发 ' + repeats + ' 遍');
-      queuePackets(chunks, function (i, n) {
+        band.name + ' · ' + symMs + 'ms · ' + (waitAckOn ? '等回执补包' : '每包轮发 ' + repeats + ' 遍'));
+      dispatch(chunks, function (i, n) {
         $('txtProg').style.width = Math.round(i / n * 100) + '%';
         $('txtInfo').textContent = i + '/' + n + ' 包';
-      }, function () {
+      }, function (ok) {
         $('btnSend').disabled = false;
-        $('txtProg').style.width = '100%';
-        log('发送完成');
+        if (ok === true) $('txtProg').style.width = '100%';
+        log(ok === false ? '发送结束（有未确认包的备份：可以让对方再点一次）' : '发送完成');
       });
     },
 
@@ -1075,7 +1228,7 @@ var App = (function () {
         for (var i = 0; i < total; i++) pkts.push(Ultra.fileChunk(u8, i, total, chunkBytes));
         $('btnSendFile').disabled = true;
         log('发送文件 ' + f.name + ' · ' + total + ' 块（每块 ' + chunkBytes + ' B）');
-        queuePackets(pkts, function (i, n) {
+        dispatch(pkts, function (i, n) {
           $('fileSendProg').style.width = Math.round(i / n * 100) + '%';
           $('fileSendInfo').textContent = i + '/' + n + ' 块';
         }, function () {
@@ -1088,8 +1241,9 @@ var App = (function () {
   };
 })();
 
-App.speed(16);
-App.repeat(2);
+App.speed(24);
+App.repeat(1);
+App.chunk(16);
 (function init() {
   // 版本自检：内核还是旧的（被缓存）时会缺档，直接说出来，省得以为功能没做
   if (Ultra.BANDS.length < 3) {
