@@ -148,5 +148,40 @@ console.log('== 两端晶振漂移（500 ppm）==');
   ok('边距是正数（判决有把握）', dec.lastMargin > 0, `${dec.lastMargin.toFixed(1)} dB`);
 }
 
+console.log('== 两端晶振频率偏移（真机 CRC 全挂、边距却很高的原因）==');
+{
+  // 发送端 48000、接收端时钟快 k%：收到的频率 +k%、符号也短 k%
+  // 18k 上 0.5% = 90 Hz，接近半个音距（200 Hz）—— 够把判音推到隔壁
+  function shiftedWave(k) {
+    const payload = Ultra.buildPacket(Ultra.chunkText('偏移也要解出来', 8)[0]);
+    const wave = Ultra.makeWaveform(payload, SR, Ultra.BANDS[0], 24);
+    const n = Math.floor(wave.length / k);
+    const out = new Float32Array(n);
+    for (let i = 0; i < n; i++) {
+      const s = i * k, i0 = Math.floor(s), f = s - i0;
+      out[i] = wave[i0] * (1 - f) + (wave[i0 + 1] || 0) * f;
+    }
+    return out;
+  }
+  function tryDecode(samples, forced) {
+    Ultra.setForcedScale(forced || 0);
+    const dec = new Ultra.StreamDecoder(SR, Ultra.BANDS[0], 24);
+    const got = [];
+    dec.onPacket = p => got.push(p);
+    const pre = new Float32Array(SR * 0.1);
+    const all = new Float32Array(pre.length + samples.length);
+    all.set(pre, 0); all.set(samples, pre.length);
+    for (let i = 0; i < all.length; i += 2048) dec.push(all.subarray(i, Math.min(all.length, i + 2048)));
+    return { got: got.length, scale: dec.fScale };
+  }
+
+  const r1 = tryDecode(shiftedWave(1.005));
+  ok('0.5% 偏移自动补偿后可解出', r1.got >= 1, `包数=${r1.got}`);
+
+  const r2 = tryDecode(shiftedWave(1.01), 1.01);
+  ok('1% 偏移手动校准到 +10‰ 可解出', r2.got >= 1, `包数=${r2.got}`);
+  Ultra.setForcedScale(0);
+}
+
 console.log(`\n结果：${pass} 通过 / ${fail} 失败`);
 process.exit(fail ? 1 : 0);

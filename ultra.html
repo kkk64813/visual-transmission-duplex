@@ -120,6 +120,15 @@
         <div>缓冲 <b id="dBuf">—</b> · 扫描位置 <b id="dScan">—</b></div>
       </div>
       <div id="dDec" class="dbg" style="margin-top:8px"></div>
+      <div class="row" style="margin-top:10px;align-items:center">
+        <span class="hint" style="margin:0;flex:none">频率校准</span>
+        <input type="range" id="rCal" min="-1" max="1" step="0.1" value="0" style="flex:1;accent-color:#0e7c66">
+        <span class="hint" id="vCal" style="margin:0;flex:none;width:64px;text-align:right">自动</span>
+        <button class="pill" onclick="App.calib(0)">自动</button>
+      </div>
+      <div class="hint">两端晶振差一点，18k 上 1% 就是 180 Hz，差不多一个音距，会把音判到隔壁去。<br>
+        这一栏默认「自动」：锁上后自己估出补偿量并显示在下面；只有怎么都锁不上时才手动拨。
+        拨到「解出包」开始跳，就是对了。</div>
       <div class="hint">
         <b>怎么读：</b>同步命中高、CRC 少 → 链路可以；同步一直 0 → 声音没进来或频带不对；
         CRC 大量失败但同步有 → 音节对齐/时钟漂移，把符号调到 24ms 再试。
@@ -389,6 +398,7 @@ var App = (function () {
     var sr = ctx ? ctx.sampleRate : 0;
     if ($('dSr')) $('dSr').textContent = sr ? (sr + ' Hz') : '—';
     if ($('dBuf')) $('dBuf').textContent = decoders.length ? (decoders[0].fill + ' 采样') : '—';
+    if ($('vCal') && !$('rCal').value) $('vCal').textContent = '自动 ×' + (decoders.length ? decoders[0].fScale.toFixed(4) : '—');
     if ($('dScan')) $('dScan').textContent = decoders.length ? decoders[0].scanAbs : '—';
     decoders.forEach(function (d) {
       var row = $('dec-' + d.band.key + '-' + d.symMs);
@@ -494,6 +504,18 @@ var App = (function () {
         b.className = 'pill' + (parseFloat(b.dataset.gn) === v ? ' on' : '');
       });
       log('发送音量 ' + g.toFixed(2));
+    },
+
+    calib: function (permille) {
+      var k = permille ? 1 + permille / 1000 : 0;   // ±1.0% 对应 ±10‰
+      Ultra.setForcedScale(k || 0);
+      decoders.forEach(function (d) {
+        d.forceScale = k || null;
+        d.fScale = k || 1;
+      });
+      $('vCal').textContent = permille ? (permille > 0 ? '+' : '') + permille.toFixed(1) + '‰' : '自动';
+      $('rCal').value = permille || 0;
+      log(permille ? ('频率校准 ' + permille.toFixed(1) + '‰') : '频率校准回到自动');
     },
 
     startRx: function () {
@@ -637,6 +659,7 @@ App.repeat(2);
     var n = f.value.length;
     document.getElementById('txtInfo').textContent = n ? (n + ' 字 · 约 ' + Math.max(1, Math.round(n / 16)) + ' 秒') : '';
   });
+  document.getElementById('rCal').addEventListener('input', function () { App.calib(+this.value * 10); });
   App.dbgRows();
 })();
 </script>

@@ -21,7 +21,9 @@
   var SR = 48000;
   var TONES = 8;
   var SYNC = [1, 5, 3, 7, 2, 6, 4, 0];
-  var GAIN = 0.72;          // 默认标准音量：够响，又不至于让喇叭非线性生出人耳可闻的差频
+  var SHARED_SCALE = 1;      // 上一次锁上时估出的频率缩放，给同设备其它解码器当种子
+var FORCED_SCALE = 0;      // 手动校准（0 = 自动）
+var GAIN = 0.72;          // 默认标准音量：够响，又不至于让喇叭非线性生出人耳可闻的差频
   var RAMP_MS = 3;
   var TWO_PI = Math.PI * 2;
 
@@ -106,7 +108,7 @@
   }
 
   /* ---------------- 调制 ---------------- */
-  function toneFreq(band, sym) { return band.f0 + sym * band.df; }
+  function toneFreq(band, sym, scale) { return (band.f0 + sym * band.df) * (scale || 1); }
 
   function makeWaveform(packet, sr, band, symMs) {
     sr = sr || SR;
@@ -177,11 +179,11 @@
     return s1 * s1 + s2 * s2 - coeff * s1 * s2;
   }
 
-  function classify(x, off, len, sr, band) {
+  function classify(x, off, len, sr, band, scale) {
     if (off < 0 || off + len > x.length) return -1;
     var mags = new Float64Array(TONES), sum = 0, best = 0;
     for (var t = 0; t < TONES; t++) {
-      var m = goertzel(x, off, len, toneFreq(band, t), sr);
+      var m = goertzel(x, off, len, toneFreq(band, t, scale), sr);
       if (!(m >= 0)) m = 0;
       mags[t] = m;
       sum += m;
@@ -211,7 +213,7 @@
 
   /* 逐音能量 + 判决 + 边距（边距=最强音比次强音高多少 dB，是“判得准不准”的直接指标）
    * span：在该偏移附近 ±span 个采样内找边距最大的位置，返回 delta 供调用方跟随时钟漂移。 */
-  function classifyBest(x, off, len, sr, band, span) {
+  function classifyBest(x, off, len, sr, band, span, scale) {
     var best = { sym: 0, margin: -99, delta: 0, e: null };
     var step = Math.max(1, Math.round((span || 0) / 2));
     for (var d = -(span || 0); d <= (span || 0); d += step) {
@@ -219,7 +221,7 @@
       if (o < 0 || o + len > x.length) continue;
       var top = -1, second = -1, topT = 0, es = new Array(TONES);
       for (var t = 0; t < TONES; t++) {
-        var m = goertzel(x, o, len, toneFreq(band, t), sr);
+        var m = goertzel(x, o, len, toneFreq(band, t, scale), sr);
         es[t] = m;
         if (m > top) { second = top; top = m; topT = t; }
         else if (m > second) second = m;
@@ -269,6 +271,8 @@
     this.lastMargin = 0;
     this.lastMinMargin = 0;
     this.lastDrift = 0;
+    this.fScale = FORCED_SCALE || SHARED_SCALE;
+    this.forceScale = FORCED_SCALE || null;
     this._busy = false;
     this.maxPayload = 200;
   }
@@ -303,22 +307,33 @@
     for (var a = start; a <= limit; a += step) {
       var off = a - this.abs0;
       // 同步头不再要求 8/8 全中：房间混响、手机 AAC 前处理都会偶尔打错一个音，
-      // 要求全中会导致「一次都锁不上」。现在 ≥6/8 就当候选，最终由 CRC 裁决。
-      var hits = 0;
-      for (var i = 0; i < SYNC.length; i++) {
-        if (classify(this.buf, off + i * symLen, symLen, this.sr, this.band) === SYNC[i]) hits++;
-        if (SYNC.length - i - 1 + hits < SYNC.length - 2) break;   // 不可能达标，早退
+      // 要求全中会导致「一次都锁不上」。但也不能一上来就放太宽 ——
+      // 频率偏移会让所有音整体偏移，先按 4/8 找候选，再对候选做频率缩放扫描。
+      var hits = this._hitCount(off, symLen, this.fScale);
+      if (hits < SYNC.length - 4) continue;
+      var fs = this.fScale;
+      if (hits < SYNC.length - 2) {
+        // 候选位置做频率缩放扫描：±3%，步长 0.001（能吃掉 1% 的晶振偏差）
+        var bestHits = hits;
+        for (var s = 0.970; s <= 1.0301; s += 0.001) {
+          var h = this._hitCount(off, symLen, s);
+          if (h > bestHits) { bestHits = h; fs = s; }
+          if (h >= SYNC.length - 1) break;
+        }
+        if (bestHits < SYNC.length - 2) continue;
       }
-      if (hits < SYNC.length - 2) continue;
 
       // 同步头对上了，但粗搜的步长是 1/4 符号，窗口可能跨在两个符号之间 ——
       // 这时候每个符号都能“勉强”判对，CRC 却会挂。这里做一次亚符号级精修：
       // 在 ±1/4 符号内试若干偏移，取「同步头 8 个符号在各自目标频率上的能量和」最大的那个。
-      var refined = this._refine(off, symLen);
+      var refined = this._refine(off, symLen, fs);
       var a2 = this.abs0 + refined;
 
+      // 锁上之后再估一次精确偏移（8 个已知同步音当标尺，精度到 0.05%）
+      this.fScale = typeof this.forceScale === 'number' ? this.forceScale : this._estimateScale(refined, symLen, fs);
+
       var lenSyms = new Uint8Array(6);
-      for (var k = 0; k < 6; k++) lenSyms[k] = classify(this.buf, refined + (SYNC.length + k) * symLen, symLen, this.sr, this.band);
+      for (var k = 0; k < 6; k++) lenSyms[k] = classify(this.buf, refined + (SYNC.length + k) * symLen, symLen, this.sr, this.band, this.fScale);
       var lb = symbolsToBytes(lenSyms);
       var needLen = lb[0] | (lb[1] << 8);
       if (needLen <= 0 || needLen > this.maxPayload) continue;
@@ -332,8 +347,20 @@
     this.scanAbs = Math.max(this.scanAbs, limit + 1);
   };
 
+  /* 数同步头命中几个音（可按频率缩放判断） */
+  StreamDecoder.prototype._hitCount = function (off, symLen, scale) {
+    var hits = 0;
+    for (var i = 0; i < SYNC.length; i++) {
+      var o = off + i * symLen;
+      if (o < 0 || o + symLen > this.fill) return hits;
+      if (classify(this.buf, o, symLen, this.sr, this.band, scale) === SYNC[i]) hits++;
+      if (SYNC.length - i - 1 + hits < SYNC.length - 4) break;
+    }
+    return hits;
+  };
+
   /* 在 base 附近找让同步头能量最大的子偏移 */
-  StreamDecoder.prototype._refine = function (base, symLen) {
+  StreamDecoder.prototype._refine = function (base, symLen, scale) {
     var q = Math.max(1, symLen >> 2);
     var sub = Math.max(1, q >> 2);
     var best = base, bestScore = -1;
@@ -342,11 +369,33 @@
       if (o < 0 || o + (SYNC.length + 1) * symLen > this.fill) continue;
       var score = 0;
       for (var i = 0; i < SYNC.length; i++) {
-        var m = goertzel(this.buf, o + i * symLen, symLen, toneFreq(this.band, SYNC[i]), this.sr);
+        var m = goertzel(this.buf, o + i * symLen, symLen, toneFreq(this.band, SYNC[i], scale), this.sr);
         if (m > 0) score += m;
       }
       if (score > bestScore) { bestScore = score; best = o; }
     }
+    return best;
+  };
+
+  /* 估频率偏移：两端晶振一旦差 1%，18k 上就是 180 Hz —— 差不多一个音距（200 Hz），
+   * 判音会“很自信”地判到隔壁音上，边距很漂亮但字节全错、CRC 必挂。
+   * 用同步头这 8 个已知音当标尺，在 seed 附近细扫，取匹配最好的那个。 */
+  StreamDecoder.prototype._estimateScale = function (base, symLen, seed) {
+    seed = seed || 1;
+    var best = seed, bestScore = -1;
+    var lo = Math.max(0.95, seed - 0.006), hi = Math.min(1.05, seed + 0.006);
+    for (var s = lo; s <= hi + 1e-9; s += 0.0002) {
+      var score = 0;
+      for (var i = 0; i < SYNC.length; i++) {
+        var o = base + i * symLen;
+        if (o < 0 || o + symLen > this.fill) { score = -1; break; }
+        var m = goertzel(this.buf, o, symLen, toneFreq(this.band, SYNC[i], s), this.sr);
+        score += m;
+      }
+      if (score > bestScore) { bestScore = score; best = s; }
+    }
+    this.fScale = best;
+    if (!FORCED_SCALE) SHARED_SCALE = best;
     return best;
   };
 
@@ -363,7 +412,7 @@
     var syms = new Uint8Array(this.totalSyms);
     var cur = base, drift = 0, sumMargin = 0, minMargin = 99;
     for (var i = 0; i < this.totalSyms; i++) {
-      var r = classifyBest(this.buf, Math.round(cur), symLen, this.sr, this.band, span);
+      var r = classifyBest(this.buf, Math.round(cur), symLen, this.sr, this.band, span, this.fScale);
       syms[i] = r.sym;
       sumMargin += r.margin;
       if (r.margin < minMargin) minMargin = r.margin;
@@ -542,6 +591,8 @@
     goertzel: goertzel, classify: classify, bandEnergy: bandEnergy,
     classifyBest: classifyBest, peakFreq: peakFreq,
     getGain: function () { return GAIN; },
+    getScale: function () { return FORCED_SCALE || SHARED_SCALE; },
+    setForcedScale: function (v) { FORCED_SCALE = (+v && Math.abs(+v - 1) > 1e-6) ? +v : 0; return FORCED_SCALE; },
     setGain: function (g) { GAIN = Math.max(0.1, Math.min(0.98, +g || 0.7)); return GAIN; },
     StreamDecoder: StreamDecoder, Tx: Tx, openMic: openMic, makeCtx: makeCtx,
     utf8: utf8, fromUtf8: fromUtf8,
