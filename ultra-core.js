@@ -26,6 +26,7 @@ var FORCED_SCALE = 0;      // 手动校准（0 = 自动）
 var GAIN = 0.72;          // 默认标准音量：够响，又不至于让喇叭非线性生出人耳可闻的差频
   var RAMP_MS = 3;
   var GLIDE_MS = 1.5;          // 相邻符号之间的等幅频率滑音长度：消掉跳频折角溅出的可听宽带能量
+  var GUARD_MS = 4;            // 判决窗跳过每个符号开头的长度（回声尾巴和滑音都在这段）
   var TWO_PI = Math.PI * 2;
 
   /* 两档频带（音距 200 Hz，8 音共 1400 Hz 宽；两档中间留 1000 Hz 隔离，避免互串）：
@@ -349,7 +350,8 @@ var GAIN = 0.72;          // 默认标准音量：够响，又不至于让喇叭
       this.fScale = typeof this.forceScale === 'number' ? this.forceScale : this._estimateScale(refined, symLen, fs);
 
       var lenSyms = new Uint8Array(6);
-      for (var k = 0; k < 6; k++) lenSyms[k] = classify(this.buf, refined + (SYNC.length + k) * symLen, symLen, this.sr, this.band, this.fScale);
+      var lg = guardOf(symLen, this.sr), lw = symLen - lg;
+      for (var k = 0; k < 6; k++) lenSyms[k] = classify(this.buf, refined + (SYNC.length + k) * symLen + lg, lw, this.sr, this.band, this.fScale);
       var lb = symbolsToBytes(lenSyms);
       var needLen = lb[0] | (lb[1] << 8);
       if (needLen <= 0 || needLen > this.maxPayload) continue;
@@ -365,29 +367,44 @@ var GAIN = 0.72;          // 默认标准音量：够响，又不至于让喇叭
     this.scanAbs = Math.max(this.scanAbs, limit + 1);
   };
 
-  /* 数同步头命中几个音（可按频率缩放判断） */
+  /* 数同步头命中几个音（可按频率缩放判断），判决窗同样只取尾部 */
   StreamDecoder.prototype._hitCount = function (off, symLen, scale) {
     var hits = 0;
+    var g = guardOf(symLen, this.sr), wl = symLen - g;
     for (var i = 0; i < SYNC.length; i++) {
-      var o = off + i * symLen;
-      if (o < 0 || o + symLen > this.fill) return hits;
-      if (classify(this.buf, o, symLen, this.sr, this.band, scale) === SYNC[i]) hits++;
+      var o = off + i * symLen + g;
+      if (o < 0 || o + wl > this.fill) return hits;
+      if (classify(this.buf, o, wl, this.sr, this.band, scale) === SYNC[i]) hits++;
       if (SYNC.length - i - 1 + hits < SYNC.length - 4) break;
     }
     return hits;
   };
 
+  /* 判决只取符号的「后半段」：
+   * 房间反射和多径会让每个符号的开头混着上一个音的尾巴，滑音段也在这段里。
+   * 直接拿整符号判决时，最佳位置搜索会被前半段拽偏 —— 这正是「同步 7/8 命中、
+   * 边距 30 dB 很高，载荷却整段错」的成因。跳掉开头一段，只判尾部，稳得多。 */
+  function guardOf(symLen, sr) {
+    var g = Math.round((sr || SR) * GUARD_MS / 1000) + Math.round(symLen * 0.12);
+    return Math.min(g, Math.round(symLen / 3));
+  }
+
+  function winOf(symLen, sr) {
+    return symLen - guardOf(symLen, sr);
+  }
+
   /* 在 base 附近找让同步头能量最大的子偏移 */
   StreamDecoder.prototype._refine = function (base, symLen, scale) {
     var q = Math.max(1, symLen >> 2);
     var sub = Math.max(1, q >> 2);
+    var g = guardOf(symLen, this.sr), wl = symLen - g;
     var best = base, bestScore = -1;
     for (var d = -q; d <= q; d += sub) {
       var o = base + d;
       if (o < 0 || o + (SYNC.length + 1) * symLen > this.fill) continue;
       var score = 0;
       for (var i = 0; i < SYNC.length; i++) {
-        var m = goertzel(this.buf, o + i * symLen, symLen, toneFreq(this.band, SYNC[i], scale), this.sr);
+        var m = goertzel(this.buf, o + i * symLen + g, wl, toneFreq(this.band, SYNC[i], scale), this.sr);
         if (m > 0) score += m;
       }
       if (score > bestScore) { bestScore = score; best = o; }
@@ -401,13 +418,14 @@ var GAIN = 0.72;          // 默认标准音量：够响，又不至于让喇叭
   StreamDecoder.prototype._estimateScale = function (base, symLen, seed) {
     seed = seed || 1;
     var best = seed, bestScore = -1;
+    var g = guardOf(symLen, this.sr), wl = symLen - g;
     var lo = Math.max(0.95, seed - 0.006), hi = Math.min(1.05, seed + 0.006);
     for (var s = lo; s <= hi + 1e-9; s += 0.0002) {
       var score = 0;
       for (var i = 0; i < SYNC.length; i++) {
-        var o = base + i * symLen;
-        if (o < 0 || o + symLen > this.fill) { score = -1; break; }
-        var m = goertzel(this.buf, o, symLen, toneFreq(this.band, SYNC[i], s), this.sr);
+        var o = base + i * symLen + g;
+        if (o < 0 || o + wl > this.fill) { score = -1; break; }
+        var m = goertzel(this.buf, o, wl, toneFreq(this.band, SYNC[i], s), this.sr);
         score += m;
       }
       if (score > bestScore) { bestScore = score; best = s; }
@@ -442,16 +460,21 @@ var GAIN = 0.72;          // 默认标准音量：够响，又不至于让喇叭
 
     // 逐符号跟随时钟：手机的 DAC 和电脑的 ADC 各走各的晶振，几百 ppm 的偏差
     // 摊到 2 秒的包上就是几毫秒 —— 后半段的窗口会跨到隔壁符号，CRC 必挂。
-    // 所以每个符号都在 ±1/8 符号内重新找一次最佳位置，把偏差带进下一个符号。
-    var span = Math.max(2, Math.round(symLen / 8));
+    // 所以每个符号都在 ±1/12 符号内重新找一次最佳位置，把偏差带进下一个符号。
+    // 窗口只取符号尾部（跳过回声与滑音），偏差必须钳住，否则会自己越拽越偏。
+    var g = guardOf(symLen, this.sr), wl = symLen - g;
+    var span = Math.max(2, Math.round(symLen / 12));
+    var clamp = Math.max(2, Math.round(symLen / 20));
     var syms = new Uint8Array(this.totalSyms);
     var cur = base, drift = 0, sumMargin = 0, minMargin = 99;
     for (var i = 0; i < this.totalSyms; i++) {
-      var r = classifyBest(this.buf, Math.round(cur), symLen, this.sr, this.band, span, this.fScale);
+      var r = classifyBest(this.buf, Math.round(cur) + g, wl, this.sr, this.band, span, this.fScale);
       syms[i] = r.sym;
       sumMargin += r.margin;
       if (r.margin < minMargin) minMargin = r.margin;
-      drift = drift * 0.6 + r.delta * 0.4;
+      drift = drift * 0.7 + r.delta * 0.3;
+      if (drift > clamp) drift = clamp;
+      if (drift < -clamp) drift = -clamp;
       cur += symLen + drift;
     }
     this.lastMargin = this.totalSyms ? sumMargin / this.totalSyms : 0;

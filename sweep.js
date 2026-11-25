@@ -34,6 +34,18 @@
   }
   function fmtDb(v) { return (v > -900 && isFinite(v)) ? v.toFixed(1) + ' dB' : '—'; }
 
+  var toastTimer = 0;
+  function toast(msg, isErr) {
+    var el = $('#toast');
+    if (!el) return;
+    el.textContent = msg;
+    el.className = 'toast' + (isErr ? ' err' : '');
+    el.hidden = false;
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { el.hidden = true; }, 4200);
+  }
+
+
   function median(list) {
     var a = list.slice().sort(function (x, y) { return x - y; });
     var m = a.length >> 1;
@@ -54,8 +66,7 @@
     return out;
   }
 
-  function shortUA(ua) {
-    var m = ua.match(/(Edg|Chrome|Firefox|Safari)\/[\d.]+/);
+  function shortUA(ua) {    var m = ua.match(/(Edg|Chrome|Firefox|Safari)\/[\d.]+/);
     var name = m ? m[0] : ua.slice(0, 40);
     var a = ua.match(/Android\s([\d.]+)/);
     var w = /Windows NT 10/.test(ua) ? 'Windows 10/11'
@@ -81,9 +92,11 @@
     var plat = (navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || '未知';
     rows.push(['平台', plat]);
     rows.push(['系统 / 浏览器', shortUA(ua)]);
-    rows.push(['安全上下文', location.isSecureContext
-      ? '是（https 或 localhost）：麦克风可用'
-      : '否：http 明文下浏览器会拒绝麦克风']);
+    var isLocal = /^(localhost|127\.0\.0\.1|0\.0\.0\.0|\[::1\])$/.test(location.hostname);
+    var secure = location.isSecureContext || isLocal;
+    rows.push(['安全上下文', secure
+      ? '是（' + (location.protocol === 'https:' ? 'https' : location.hostname) + '）：麦克风可用'
+      : '否（' + location.protocol + '）：浏览器会拒绝麦克风，请改用 https 或 localhost']);
 
     var AC = window.AudioContext || window.webkitAudioContext;
     rows.push(['Web Audio', AC ? '支持' : '不支持']);
@@ -113,19 +126,18 @@
     rows.push(['输入延迟 baseLatency', baseLat == null ? '未提供' : (baseLat * 1000).toFixed(1) + ' ms']);
     rows.push(['输出延迟 outputLatency', outLat == null ? '未提供' : (outLat * 1000).toFixed(1) + ' ms']);
 
-    var devCount = '未枚举';
-    rows.push(['音频输入设备', devCount]);
+    rows.push(['音频设备', '<span id="devCell">枚举中…</span>']);
 
     if (navigator.mediaDevices && navigator.mediaDevices.enumerateDevices) {
       navigator.mediaDevices.enumerateDevices().then(function (list) {
         var inputs = list.filter(function (d) { return d.kind === 'audioinput'; });
         var outs = list.filter(function (d) { return d.kind === 'audiooutput'; });
-        var t = $('#envTable');
-        var existing = t.querySelector('tr:nth-child(10)');
-        if (existing) {
-          existing.lastElementChild.textContent = inputs.length + ' 个输入 / ' + outs.length + ' 个输出' +
-            (inputs.some(function (d) { return !d.label; }) ? '（未授权，名称隐藏）' : '：' + inputs.map(function (d) { return d.label; }).join(' · '));
-        }
+        var cell = $('#devCell');
+        if (!cell) return;
+        var named = inputs.some(function (d) { return !!d.label; });
+        cell.textContent = inputs.length + ' 个输入 / ' + outs.length + ' 个输出' +
+          (named ? '：' + inputs.map(function (d) { return d.label; }).join(' · ')
+                 : '（未授权，系统隐藏了设备名）');
       }).catch(function () { });
     }
 
@@ -136,6 +148,14 @@
   }
 
   /* ---------------- ② 音频图 ---------------- */
+
+  // resume() 在没有音频后端的环境（无头、部分虚拟机）可能永远不 resolve，必须给它上上限
+  function resumeSafe() {
+    if (!S.ctx) return Promise.resolve();
+    var p;
+    try { p = S.ctx.resume(); } catch (e) { p = Promise.resolve(); }
+    return Promise.race([Promise.resolve(p).catch(function () { }), sleep(900)]);
+  }
 
   function ensureCtx() {
     if (!S.ctx) {
@@ -159,7 +179,7 @@
       S.osc.connect(S.env);
       S.osc.start();
     }
-    if (S.ctx.state !== 'running') S.ctx.resume();
+    if (S.ctx.state !== 'running') resumeSafe();
     S.sr = S.ctx.sampleRate;
     S.nyq = S.sr / 2;
 
@@ -295,7 +315,10 @@
     if (S.running) return;
     await ensureCtx();
     await openMic();
-    if (S.ctx.state !== 'running') await S.ctx.resume();
+    if (S.ctx.state !== 'running') await resumeSafe();
+    if (S.ctx.state !== 'running') {
+      toast('音频引擎没起来（这台设备没有可用的音频输出？），测出来的电平会是空的。', true);
+    }
 
     var f0 = Math.max(60, +$('#inF0').value || 400);
     var n = Math.min(96, Math.max(12, +$('#inN').value || 36));
@@ -352,7 +375,6 @@
     var low = [];
     for (var j = 0; j < pts.length; j++) if (pts[j] < 3000 && isFinite(raws[j])) low.push(raws[j]);
     var base = low.length ? Math.max.apply(null, low) : Math.max.apply(null, raws);
-    S.baseFreq = pts[pts.length - 1];
 
     var rel = raws.map(function (v) { return v - base; });
     rel = smooth(rel, 1);
@@ -417,7 +439,8 @@
       text = '这台设备的声学链路能撑到 <b>' + fmtHz(upper) + '</b> 以上，直接用它跑 19 kHz 段超声信道没问题，20 kHz 以上也还有余量。';
     } else if (upper >= 18000) {
       tier = '够用'; cls = 'verdict';
-      text = '有效带宽到 <b>' + fmtHz(upper) + '</b>。18.1–19.5 kHz 这条信道可以用，但已经贴着边了：窗口建议取 <b>17.0 – ' + fmtHz(Math.min(upper - 200, 19500)).replace(' kHz', ' kHz') + '</b>，再往上只会白耗功率。';
+      var hi = Math.min(Math.max(17000, upper - 300), 19500);
+      text = '有效带宽到 <b>' + fmtHz(upper) + '</b>。18.1–19.5 kHz 这条信道可以用，但已经贴着边了：窗口建议取 <b>17.0 kHz – ' + fmtHz(hi) + '</b>，再往上只会白耗功率。';
     } else if (upper >= 15000) {
       tier = '偏窄'; cls = 'verdict warn';
       text = '只到 <b>' + fmtHz(upper) + '</b>。18 kHz 段发出来也是蚊子叫，超声信道要么降到 15–17 kHz（环境噪声更脏），要么换外置喇叭/换设备。';
@@ -530,9 +553,11 @@
         var px = xLog(Math.min(fmax, pk.hz), fmin, fmax, w, pad);
         g.strokeStyle = 'rgba(180,66,58,.75)'; g.lineWidth = 1;
         g.beginPath(); g.moveTo(px, 8); g.lineTo(px, h - 18); g.stroke();
-        $('#specMeta').textContent = '全频峰值 ' + fmtHz(pk.hz) + ' · ' + fmtDb(pk.db) +
-          '　|　8 kHz 以上峰值 ' + fmtHz(S.peakHz) + ' · ' + fmtDb(S.peakDb) +
-          (S.curFreq ? '　|　当前播放 ' + fmtHz(S.curFreq) : '');
+        if ((S.textTick = ((S.textTick || 0) + 1) % 5) === 0) {
+          $('#specMeta').textContent = '全频峰值 ' + fmtHz(pk.hz) + ' · ' + fmtDb(pk.db) +
+            '　|　8 kHz 以上峰值 ' + fmtHz(S.peakHz) + ' · ' + fmtDb(S.peakDb) +
+            (S.curFreq ? '　|　当前播放 ' + fmtHz(S.curFreq) : '');
+        }
       } else {
         $('#specMeta').textContent = '没有信号（麦克风未授权或静音）';
       }
@@ -698,8 +723,12 @@
       $('#panelLoop').hidden = S.mode !== 'loop';
       $('#panelTx').hidden = S.mode !== 'tx';
       $('#panelRx').hidden = S.mode !== 'rx';
-      if (S.mode === 'rx' || S.mode === 'loop') { ensureCtx(); openMic().then(function () { }).catch(function () { }); }
-      else { closeMic(); }
+      if (S.mode === 'rx' || S.mode === 'loop') {
+        ensureCtx();
+        openMic().catch(function () { });
+      } else {
+        closeMic();
+      }
     });
 
     $('#btnRun').addEventListener('click', function () { runSweep().catch(function (e) { alert(e.message); finishSweep(true); }); });
@@ -708,7 +737,6 @@
     // TX
     var rng = $('#inFreq');
     rng.addEventListener('input', function () { $('#txFreqLabel').textContent = rng.value; });
-    $('#inAmp').addEventListener('input', function () { if (S.running === false) { } });
 
     $('#btnTone').addEventListener('click', async function () {
       try {

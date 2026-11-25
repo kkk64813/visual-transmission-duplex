@@ -242,14 +242,15 @@
 </main>
 
 <footer>
-  纯本地：声音只在空气里走，不经过网络。 版本 v2026-11-25c（三档频带）返回 <a href="./index.html">首页</a> ·
+  纯本地：声音只在空气里走，不经过网络。 版本 v2026-11-25d（三档 · 尾部判决窗）返回 <a href="./index.html">首页</a> ·
   双工控制通道见 <a href="./duplex.html">duplex</a>
 </footer>
 
-<script src="ultra-core.js?v=20261125c"></script>
+<script src="ultra-core.js?v=20261125d"></script>
 <script>
 var App = (function () {
   var band = Ultra.BANDS[0];       // 默认 18.1k 实测 18k 听不见
+  var autoBand = false;            // 自动档：每发一遍换一档，三档轮流铺
   var symMs = 16, repeats = 2;
   var ctx = null, tx = null;
   var micStream = null, proc = null;
@@ -286,14 +287,21 @@ var App = (function () {
   function buildBandRow() {
     var row = $('bandRow');
     row.innerHTML = '';
+    var ab = document.createElement('button');
+    ab.className = 'pill' + (autoBand ? ' on' : '');
+    ab.textContent = '自动 · 三档轮流';
+    ab.onclick = function () { App.pickBand('auto'); };
+    row.appendChild(ab);
     Ultra.BANDS.forEach(function (b) {
       var btn = document.createElement('button');
-      btn.className = 'pill' + (b.key === band.key ? ' on' : '');
+      btn.className = 'pill' + (!autoBand && b.key === band.key ? ' on' : '');
       btn.textContent = b.name + ' · ' + b.label;
       btn.onclick = function () { App.pickBand(b.key); };
       row.appendChild(btn);
     });
-    $('bandNote').textContent = band.desc;
+    $('bandNote').textContent = autoBand
+      ? '自动：每发一遍换一档频带，三档轮流铺，接收端哪个档解出就是哪个档能过（慢 3 倍，但不用猜）'
+      : band.desc;
     buildMeters();
   }
 
@@ -512,7 +520,7 @@ var App = (function () {
   }
 
   function queuePackets(packets, onProgress, onDone) {
-    var i = 0;
+    var i = 0, bandIdx = 0;
     function next() {
       if (i >= packets.length) { if (onDone) onDone(); return; }
       var pkt = packets[i];
@@ -522,7 +530,9 @@ var App = (function () {
       function one() {
         if (reps >= repeats) { setTimeout(next, 220); return; }
         reps++;
-        tx.send(Ultra.buildPacket(pkt), band, symMs, function () { setTimeout(one, 180); });
+        // 自动档：每发一遍换一个频段，三档轮流铺，哪档能过就哪档过
+        var b = autoBand ? Ultra.BANDS[bandIdx++ % Ultra.BANDS.length] : band;
+        tx.send(Ultra.buildPacket(pkt), b, symMs, function () { setTimeout(one, 180); });
       }
       one();
     }
@@ -540,6 +550,13 @@ var App = (function () {
     },
 
     pickBand: function (key) {
+      if (key === 'auto') {
+        autoBand = true;
+        buildBandRow();
+        log('发送频段：自动（每遍换一档，18.1k→20.5k→22.3k 轮流）');
+        return;
+      }
+      autoBand = false;
       band = Ultra.bandByKey(key);
       buildBandRow();
       log('发送频段切到 ' + band.name);
@@ -759,6 +776,11 @@ App.repeat(2);
     log('内核还是旧版（只有 ' + Ultra.BANDS.length + ' 档）：强制刷新页面（长按刷新 / 清缓存）', '#c0392b');
   }
   var row = document.getElementById('bandRow');
+  var ab = document.createElement('button');
+  ab.className = 'pill';
+  ab.textContent = '自动 · 三档轮流';
+  ab.onclick = function () { App.pickBand('auto'); };
+  row.appendChild(ab);
   Ultra.BANDS.forEach(function (b) {
     var btn = document.createElement('button');
     btn.className = 'pill' + (b.key === 'mid' ? ' on' : '');
