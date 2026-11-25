@@ -92,7 +92,7 @@
 
 <header>
   <div class="mark"></div>
-  <div class="brand">超声信道<small>UltraLink · 固定 18.1k · 24ms</small></div>
+  <div class="brand">超声信道<small>UltraLink · 双音 18.1k · 24ms</small></div>
   <div class="grow"></div>
   <div class="dot" id="dot"></div>
   <span style="font-size:12px;color:var(--muted)" id="stateTxt">未启动</span>
@@ -212,6 +212,11 @@
         <button class="pill" data-gn="0.9" onclick="App.gain(0.9)">音量 · 响</button>
       </div>
       <div class="row" style="margin-top:8px">
+        <span class="hint" style="margin:0">调制</span>
+        <button class="pill on" id="mdDual" onclick="App.mode('dual')">双音 4bit（推荐）</button>
+        <button class="pill" id="mdSingle" onclick="App.mode('single')">单音 3bit</button>
+      </div>
+      <div class="row" style="margin-top:8px">
         <button onclick="App.stopAll()" style="color:#c0392b">■ 立即硬停</button>
         <span class="hint" id="txRate" style="margin:0"></span>
       </div>
@@ -302,11 +307,11 @@
 
 
 <footer>
-  纯本地：声音只在空气里走，不经过网络。 版本 v2026-11-25v（定位音测绝对频率 · 校不过不写 · 屏上显示同步命中）返回 <a href="./index.html">首页</a> ·
+  纯本地：声音只在空气里走，不经过网络。 版本 v2026-11-25w（双音 4+4 · 4bit/符号 · 定位音自校 · 屏上同步命中）返回 <a href="./index.html">首页</a> ·
   双工控制通道见 <a href="./duplex.html">duplex</a>
 </footer>
 
-<script src="ultra-core.js?v=20261125v"></script>
+<script src="ultra-core.js?v=20261125w"></script>
 <script>
 var App = (function () {
   /* ===== 单档单速（2026-11-25 起）=====
@@ -315,6 +320,13 @@ var App = (function () {
    * 加宽到 18–21k 不会提高容错（容错来自音间距和时间长度），只会让一半数据落在最弱的频段上。
    * 顺带把 9 个解码器砍成 1 个，手机 CPU 掉样/卡死的问题从根上消失。 */
   var ONE_BAND = 'mid', ONE_SP = 24;
+  /* 双音（4+4，仿 DTMF）：每个符号同时发一个行音 + 一个列音 → 16 组 = 4 bit/符号。
+   * 同一频段、同样 24ms，速率比单音高 33%，而且必须行、列同时对得上才算一个符号，
+   * 单个杂音再响也凑不出符号。想退回单音就点「单音」——两套解码器都在，随时可比。 */
+  var MODE = 'dual';
+  if (Ultra.setMode) Ultra.setMode(MODE);
+  function dualOn() { return MODE === 'dual'; }
+  function packetSymbols(n) { return Ultra.packetSymbols(n == null ? chunkBytes : n); }
   var band = Ultra.bandByKey ? Ultra.bandByKey(ONE_BAND) : Ultra.BANDS[0];
   var autoBand = false;
   var chunkBytes = 16;             // 每包载荷字节：实测真机单包 >2.5 秒几乎必挂，16B@24ms ≈1.7 秒最稳
@@ -369,7 +381,7 @@ var App = (function () {
   function buildBandRow() {
     var row = $('bandRow');
     if (row) {
-      row.innerHTML = '<span class="tag">固定 · 18.1k（18100–19500 Hz）· 24ms</span>';
+      row.innerHTML = '<span class="tag">固定 · 18.1k（18100–19500 Hz）· 24ms · 双音 4bit</span>';
     }
     var bn = $('bandNote');
     if (bn) bn.textContent = '只用这一档、这一速：18.1k 在手机扬声器和电脑麦克风上都是满能量，20.5k 只有三成、22.3k 电脑收不到，所以分档全部下线。';
@@ -442,7 +454,7 @@ var App = (function () {
     decoders = [];
     /* 只开一个：18.1k + 24ms。原来 3 档 × 3 速度 = 9 个解码器是手机卡死/掉样的总根源。 */
     var b = Ultra.bandByKey(ONE_BAND), sp = ONE_SP;
-    var d = new Ultra.StreamDecoder(sr, b, sp);
+    var d = new Ultra.StreamDecoder(sr, b, sp, dualOn());
     d.onPacket = function (payload) { onPacket(payload, b, sp); };
     d.onError = function (kind) {
       if (kind === 'crc') { inc('stCrc'); } else { inc('stSync'); }
@@ -1001,7 +1013,8 @@ var App = (function () {
     var t = $('txTag');
     if (t && b) t.textContent = (live ? '正在发 · ' : '档位 · ') + b.name + '（' + b.f0 + ' Hz 起）';
     var r = $('txRate');
-    if (r) r.textContent = '18.1k · ' + symMs + 'ms/符号 · 每包 ' + chunkBytes + 'B';
+    if (r) r.textContent = '18.1k · ' + symMs + 'ms/符号 · ' + (dualOn() ? '双音 4bit' : '单音 3bit') +
+      ' · 每包 ' + chunkBytes + 'B（约 ' + (packetSymbols() * symMs / 1000 + 0.3).toFixed(1) + ' 秒）';
   }
 
   function markTxIdle() {
@@ -1093,7 +1106,7 @@ var App = (function () {
       /* 只挂 18.1k / 24ms 一个解码器：回执固定走这一档（电脑麦克风上限约 21.2k，22.3k 收不到）。
        * 解码器同时把所有「同步/CRC」计数留在 stat 里，监听结束时原样报出来 —— 这样
        * 「对方根本没发声」和「发了但我解不出」一眼能分开。 */
-      var d = new Ultra.StreamDecoder(ctx.sampleRate, Ultra.bandByKey(ACK_BAND), ACK_SP);
+      var d = new Ultra.StreamDecoder(ctx.sampleRate, Ultra.bandByKey(ACK_BAND), ACK_SP, dualOn());
       var maxHits = 0;
       d.onPacket = function (p) {
         var pl = Ultra.parsePayload(p);
@@ -1290,12 +1303,28 @@ var App = (function () {
       });
     },
 
+    /* 双音 / 单音切换：两套解码器都在，随时可退回去对比。
+     * 切换会重建解码器（正在监听就先停再开），因为同步图案不一样。 */
+    mode: function (m) {
+      MODE = (m === 'single') ? 'single' : 'dual';
+      if (Ultra.setMode) Ultra.setMode(MODE);
+      if ($('mdDual')) $('mdDual').className = 'pill' + (MODE === 'dual' ? ' on' : '');
+      if ($('mdSingle')) $('mdSingle').className = 'pill' + (MODE === 'single' ? ' on' : '');
+      log('调制切换：' + (MODE === 'dual' ? '双音 4bit/符号（16 组，行+列同时对上才算）' : '单音 3bit/符号'), '#0a5f4f');
+      if (running) {
+        this.stopRx();
+        setTimeout(function () { App.startRx(); }, 350);
+      } else {
+        markTx(null, false);
+      }
+    },
+
     chunk: function (v) {
       chunkBytes = v;
       Array.prototype.forEach.call(document.querySelectorAll('[data-cb]'), function (b) {
         b.className = 'pill' + (parseInt(b.dataset.cb, 10) === v ? ' on' : '');
       });
-      var secs = ((9 + 3 * (v + 4)) * symMs / 1000).toFixed(1);
+      var secs = (Ultra.packetSymbols(v) * symMs / 1000).toFixed(1);
       $('chunkNote').textContent = '每包 ' + v + ' 字节 ≈ ' + symMs + 'ms 下 ' + secs +
         ' 秒一包。包越短越抗中途失步，中文（一个字 3 字节）尤其要短。';
       log('每包载荷 ' + v + ' 字节（约 ' + secs + ' 秒/包）');
