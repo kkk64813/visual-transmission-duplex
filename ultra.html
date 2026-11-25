@@ -235,6 +235,14 @@
         <button class="pill" data-rp="3" onclick="App.repeat(3)">3 遍</button>
         <button class="pill" data-rp="1" onclick="App.repeat(1)">1 遍</button>
       </div>
+      <div class="row" style="margin-top:8px">
+        <span class="hint" style="margin:0;flex:none">每包字节</span>
+        <button class="pill" data-cb="16" onclick="App.chunk(16)">16</button>
+        <button class="pill on" data-cb="24" onclick="App.chunk(24)">24</button>
+        <button class="pill" data-cb="48" onclick="App.chunk(48)">48</button>
+        <button class="pill" data-cb="64" onclick="App.chunk(64)">64</button>
+      </div>
+      <div class="hint" id="chunkNote" style="margin-top:6px">每包 24 字节 ≈ 32ms 下 2.9 秒一包。包越短越抗中途失步，中文（一个字 3 字节）尤其要短。</div>
       <div class="hint" id="speedNote"></div>
     </div>
 
@@ -266,15 +274,16 @@
 </main>
 
 <footer>
-  纯本地：声音只在空气里走，不经过网络。 版本 v2026-11-25f（全符号滑音 · 丢样表 · 循环可停）返回 <a href="./index.html">首页</a> ·
+  纯本地：声音只在空气里走，不经过网络。 版本 v2026-11-25g（短包 · 轮发 · 续收补包）返回 <a href="./index.html">首页</a> ·
   双工控制通道见 <a href="./duplex.html">duplex</a>
 </footer>
 
-<script src="ultra-core.js?v=20261125f"></script>
+<script src="ultra-core.js?v=20261125g"></script>
 <script>
 var App = (function () {
   var band = Ultra.BANDS[0];       // 默认 18.1k 实测 18k 听不见
   var autoBand = false;            // 自动档：每发一遍换一档，三档轮流铺
+  var chunkBytes = 24;             // 每包载荷字节：越长越容易中途失步
   var loopTimer = null, loopN = 0, loopOn = false; // 循环发校准包
   var symMs = 16, repeats = 2;
   var ctx = null, tx = null;
@@ -583,14 +592,20 @@ var App = (function () {
     var p = Ultra.parsePayload(payload);
     if (!p) return;
     if (p.type === 'text') {
-      if (p.seq === 0) textState = { total: p.total, parts: {} };
+      // 同一段文字再发一次时要「续收」而不是清空重来：缺哪包补哪包，
+      // 这就是没有反向信道时的手动 ARQ —— 再点一次发送，缺的几包通常就补上了。
+      if (p.seq === 0 && textState.total !== p.total) textState = { total: p.total, parts: {} };
+      if (!textState.total) textState = { total: p.total, parts: {} };
       textState.parts[p.seq] = p.data;
       if (Object.keys(textState.parts).length === textState.total) {
         var s = Ultra.joinText(textState.parts, textState.total);
         $('outText').textContent = s || '';
         log('收到文字 ' + (s ? s.length : 0) + ' 字 · 经 ' + b.name + '/' + sp + 'ms', '#0a5f4f');
       } else {
-        $('outText').textContent = '接收中… ' + Object.keys(textState.parts).length + '/' + textState.total;
+        var miss = [];
+        for (var k = 0; k < textState.total; k++) if (!textState.parts[k]) miss.push(k + 1);
+        $('outText').textContent = '接收中… ' + Object.keys(textState.parts).length + '/' + textState.total +
+          '（还缺第 ' + miss.join('、') + ' 包）';
       }
     } else if (p.type === 'fileHead') {
       fileState = { name: p.name, size: p.size, total: p.total, parts: {}, got: 0 };
@@ -722,23 +737,27 @@ var App = (function () {
   }
 
   function queuePackets(packets, onProgress, onDone) {
-    var i = 0, bandIdx = 0;
-    function next() {
-      if (i >= packets.length) { if (onDone) onDone(); return; }
-      var pkt = packets[i];
-      i++;
-      onProgress && onProgress(i, packets.length);
-      var reps = 0;
+    var bandIdx = 0;
+    var sent = 0, total = packets.length * repeats;
+    // 轮着发，而不是每包连发 N 遍：
+    // 单包越长越容易中途失步（32ms × 183 符号 ≈ 5.9 秒必然挂），
+    // 所以这里 A,B,C,A,B,C 逐轮铺 —— 接收端每包只要成一次，「中间断一个」不会连累别的包。
+    var reps = 0;
+    function round() {
+      if (reps >= repeats) { if (onDone) onDone(); return; }
+      reps++;
+      var i = 0;
       function one() {
-        if (reps >= repeats) { setTimeout(next, 220); return; }
-        reps++;
-        // 自动档：每发一遍换一个频段，三档轮流铺，哪档能过就哪档过
+        if (i >= packets.length) { setTimeout(round, 240); return; }
+        var pkt = packets[i]; i++;
+        sent++;
+        onProgress && onProgress(sent, total);
         var b = autoBand ? Ultra.BANDS[bandIdx++ % Ultra.BANDS.length] : band;
-        tx.send(Ultra.buildPacket(pkt), b, symMs, function () { setTimeout(one, 180); });
+        tx.send(Ultra.buildPacket(pkt), b, symMs, function () { setTimeout(one, 160); });
       }
       one();
     }
-    next();
+    round();
   }
 
   return {
@@ -777,6 +796,17 @@ var App = (function () {
       Array.prototype.forEach.call(document.querySelectorAll('[data-rp]'), function (b) {
         b.className = 'pill' + (parseInt(b.dataset.rp, 10) === v ? ' on' : '');
       });
+    },
+
+    chunk: function (v) {
+      chunkBytes = v;
+      Array.prototype.forEach.call(document.querySelectorAll('[data-cb]'), function (b) {
+        b.className = 'pill' + (parseInt(b.dataset.cb, 10) === v ? ' on' : '');
+      });
+      var secs = ((9 + 3 * (v + 4)) * symMs / 1000).toFixed(1);
+      $('chunkNote').textContent = '每包 ' + v + ' 字节 ≈ ' + symMs + 'ms 下 ' + secs +
+        ' 秒一包。包越短越抗中途失步，中文（一个字 3 字节）尤其要短。';
+      log('每包载荷 ' + v + ' 字节（约 ' + secs + ' 秒/包）');
     },
 
     gain: function (v) {
@@ -1010,9 +1040,10 @@ var App = (function () {
       var s = $('txt').value;
       if (!s) { log('没内容'); return; }
       ensureCtx();
-      var chunks = Ultra.chunkText(s, 64);
+      var chunks = Ultra.chunkText(s, chunkBytes);
       $('btnSend').disabled = true;
-      log('开始发送 ' + s.length + ' 字 · ' + chunks.length + ' 包 · ' + band.name + ' · ' + symMs + 'ms · ×' + repeats);
+      log('开始发送 ' + s.length + ' 字 · ' + chunks.length + ' 包（每包 ' + chunkBytes + ' B）· ' +
+        band.name + ' · ' + symMs + 'ms · 每包轮发 ' + repeats + ' 遍');
       queuePackets(chunks, function (i, n) {
         $('txtProg').style.width = Math.round(i / n * 100) + '%';
         $('txtInfo').textContent = i + '/' + n + ' 包';
@@ -1039,12 +1070,11 @@ var App = (function () {
       var reader = new FileReader();
       reader.onload = function () {
         var u8 = new Uint8Array(reader.result);
-        var chunkBytes = 64;
         var total = Math.ceil(u8.length / chunkBytes);
         var pkts = [Ultra.fileHead(f.name, u8.length, total)];
         for (var i = 0; i < total; i++) pkts.push(Ultra.fileChunk(u8, i, total, chunkBytes));
         $('btnSendFile').disabled = true;
-        log('发送文件 ' + f.name + ' · ' + total + ' 块');
+        log('发送文件 ' + f.name + ' · ' + total + ' 块（每块 ' + chunkBytes + ' B）');
         queuePackets(pkts, function (i, n) {
           $('fileSendProg').style.width = Math.round(i / n * 100) + '%';
           $('fileSendInfo').textContent = i + '/' + n + ' 块';
