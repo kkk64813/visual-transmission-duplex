@@ -164,8 +164,10 @@
       <div class="hint" id="bandNote"></div>
       <div class="row" style="margin-top:10px">
         <button id="btnProbe" onclick="App.probe()">发探测音（1.2 秒）</button>
+        <button onclick="App.calibrate()">先发校准（3 个短包）</button>
         <span class="hint" style="margin:0">先探测再发送，能省掉来回试。</span>
       </div>
+      <div class="hint">「先发校准」= 连发 3 个最短的包，让对方先锁上、把频率补偿估准（显示成「自动 ×1.0…」），之后正式内容才不容易整包报废。</div>
       <div class="row" style="margin-top:8px">
         <button class="pill" data-gn="0.5" onclick="App.gain(0.5)">音量 · 轻</button>
         <button class="pill on" data-gn="0.72" onclick="App.gain(0.72)">音量 · 标准</button>
@@ -580,6 +582,20 @@ var App = (function () {
       tx.probe(band, 1200, function () {
         $('btnProbe').disabled = false;
         log('探测音结束');
+      });
+    },
+
+    /* 校准阶段：连发 3 个最短的包，让对方先锁上、估准频率补偿，
+     * 之后正式内容才不会整包报废。没有反向信道，所以用「同向多铺几遍」代替握手。 */
+    calibrate: function () {
+      ensureCtx();
+      var pkts = [];
+      for (var i = 0; i < 3; i++) pkts.push(Ultra.chunkText('CAL', 8)[0]);
+      $('btnProbe').disabled = true;
+      log('校准：' + band.name + ' · ' + symMs + 'ms · 3 个短包');
+      queuePackets(pkts, null, function () {
+        $('btnProbe').disabled = false;
+        log('校准包发完，让对方看「自动 ×1.0…」是不是已经跳开 1.0000');
       });
     },
 

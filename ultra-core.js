@@ -306,28 +306,32 @@ var GAIN = 0.72;          // 默认标准音量：够响，又不至于让喇叭
 
     for (var a = start; a <= limit; a += step) {
       var off = a - this.abs0;
-      // 同步头不再要求 8/8 全中：房间混响、手机 AAC 前处理都会偶尔打错一个音，
-      // 要求全中会导致「一次都锁不上」。但也不能一上来就放太宽 ——
-      // 频率偏移会让所有音整体偏移，先按 4/8 找候选，再对候选做频率缩放扫描。
+      // 锁的条件分两级，且都必须「验过」才算数：
+      //  1) 先用当前缩放（种子/上次估出的）数命中，≥5/8 才进候选 —— 只放宽两票，
+      //     放到 4/8 会把大量噪声位置也当候选，反而误锁、把真包跳过去；
+      //  2) 候选再在种子 ±0.8% 内细扫缩放（偏移不可能比这更大，扫 ±3% 等于给错解开门），
+      //     必须扫到 ≥7/8 才认。
       var hits = this._hitCount(off, symLen, this.fScale);
-      if (hits < SYNC.length - 4) continue;
+      if (hits < SYNC.length - 3) continue;
       var fs = this.fScale;
-      if (hits < SYNC.length - 2) {
-        // 候选位置做频率缩放扫描：±3%，步长 0.001（能吃掉 1% 的晶振偏差）
-        var bestHits = hits;
-        for (var s = 0.970; s <= 1.0301; s += 0.001) {
+      if (hits < SYNC.length - 1) {
+        var bestHits = hits, seed = this.fScale;
+        for (var s = seed - 0.008; s <= seed + 0.0081; s += 0.0008) {
           var h = this._hitCount(off, symLen, s);
           if (h > bestHits) { bestHits = h; fs = s; }
           if (h >= SYNC.length - 1) break;
         }
-        if (bestHits < SYNC.length - 2) continue;
+        if (bestHits < SYNC.length - 1) continue;
       }
 
       // 同步头对上了，但粗搜的步长是 1/4 符号，窗口可能跨在两个符号之间 ——
-      // 这时候每个符号都能“勉强”判对，CRC 却会挂。这里做一次亚符号级精修：
-      // 在 ±1/4 符号内试若干偏移，取「同步头 8 个符号在各自目标频率上的能量和」最大的那个。
+      // 这时候每个符号都能“勉强”判对，CRC 却会挂。这里做一次亚符号级精修。
       var refined = this._refine(off, symLen, fs);
       var a2 = this.abs0 + refined;
+
+      // 精修之后再验一遍：这里必须 ≥7/8，否则就只是噪声凑出来的假锁。
+      var ver = this._hitCount(refined, symLen, fs);
+      if (ver < SYNC.length - 1) continue;
 
       // 锁上之后再估一次精确偏移（8 个已知同步音当标尺，精度到 0.05%）
       this.fScale = typeof this.forceScale === 'number' ? this.forceScale : this._estimateScale(refined, symLen, fs);
@@ -446,7 +450,8 @@ var GAIN = 0.72;          // 默认标准音量：够响，又不至于让喇叭
       if (this.onPacket) this.onPacket(payload, this.lastMargin);
     }
     this.syncAbs = -1;
-    this.scanAbs = Math.max(this.scanAbs, base + this.abs0 + need - symLen);
+    // 失败时只跳过同步头，不跳过整包 —— 发送端每包都会重发，后面那几遍还能捞回来
+    this.scanAbs = Math.max(this.scanAbs, base + this.abs0 + (SYNC.length + 1) * symLen);
   };
 
   /* ---------------- 载荷类型与分块 ---------------- */
