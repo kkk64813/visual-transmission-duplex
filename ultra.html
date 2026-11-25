@@ -137,6 +137,24 @@
     </div>
 
     <div class="card">
+      <h3>一键自动校正</h3>
+      <div class="hint" style="margin-top:0">
+        让对方点「循环发校准包」（会一直发），这边点下面的按钮就行：自动把 3 档频带 × 3 种符号长度挨个试一遍，
+        再在最能过的那一格里把频率缩放从 −1.2% 扫到 +1.2%，最后把最好的那组直接应用，并出一份报告。
+      </div>
+      <div class="row" style="margin-top:8px">
+        <button class="primary" id="btnCal" onclick="App.autoCal()">一键自动校正</button>
+        <button id="btnCalStop" onclick="App.calStop()" disabled>停止校正</button>
+        <span class="hint" id="calStat" style="margin:0">未开始</span>
+      </div>
+      <textarea id="calOut" class="out" readonly style="font-size:11px;line-height:1.5;height:210px;width:100%;overflow:auto;white-space:pre;resize:vertical;font-family:ui-monospace,Menlo,Consolas,monospace;margin-top:8px">（未校正）</textarea>
+      <div class="row" style="margin-top:6px">
+        <button class="pill" onclick="App.calSelect()">全选报告</button>
+        <button class="pill" onclick="App.calCopy()">复制报告</button>
+      </div>
+    </div>
+
+    <div class="card">
       <h3>诊断日志（全选复制贴出来就能定位）</h3>
       <div class="hint" style="margin-top:0">每次「锁上 / 包内复检不过 / CRC 失败 / 收到包」都记一行：档位、符号长度、同步命中、估出的缩放、边距、漂移、长度字段。出问题时点「全选」，长按文字框复制，直接贴过来。</div>
       <div class="row" style="margin-top:8px">
@@ -190,6 +208,11 @@
         <button onclick="App.quietPreset()">一键「静音优先」</button>
         <span class="hint" style="margin:0">静默音量 + 32ms 慢速：最不容易被人耳听到的一组</span>
       </div>
+      <div class="row" style="margin-top:8px">
+        <button id="btnLoop" onclick="App.loopCal()">循环发校准包</button>
+        <span class="hint" id="loopCnt" style="margin:0">点一次开始，再点一次停</span>
+      </div>
+      <div class="hint" style="margin-top:6px">对方点「一键自动校正」时用这个：会一直重复发同一个短包，直到你点停。</div>
       <div class="hint">
         人耳听到的那点声音，几乎都是喇叭自己把超声“检波”出来的，跟频段高低关系不大：<b>幅度降一半，失真降到四分之一</b>。
         所以想去掉声音，先降音量，再降速度（符号越长，同样的距离越不费劲），不要先换频段。
@@ -242,15 +265,16 @@
 </main>
 
 <footer>
-  纯本地：声音只在空气里走，不经过网络。 版本 v2026-11-25d（三档 · 尾部判决窗）返回 <a href="./index.html">首页</a> ·
+  纯本地：声音只在空气里走，不经过网络。 版本 v2026-11-25e（一键校正）返回 <a href="./index.html">首页</a> ·
   双工控制通道见 <a href="./duplex.html">duplex</a>
 </footer>
 
-<script src="ultra-core.js?v=20261125d"></script>
+<script src="ultra-core.js?v=20261125e"></script>
 <script>
 var App = (function () {
   var band = Ultra.BANDS[0];       // 默认 18.1k 实测 18k 听不见
   var autoBand = false;            // 自动档：每发一遍换一档，三档轮流铺
+  var loopTimer = null, loopN = 0; // 循环发校准包
   var symMs = 16, repeats = 2;
   var ctx = null, tx = null;
   var micStream = null, proc = null;
@@ -336,6 +360,182 @@ var App = (function () {
   function inc(id) {
     var e = $(id);
     e.textContent = (parseInt(e.textContent, 10) || 0) + 1;
+  }
+
+  /* ---------- 一键自动校正 ----------
+   * 阶段 A：3 档频带 × 3 种符号长度，每格 1.8 秒，数解出的包
+   * 阶段 B：在最能过的那格里，把频率缩放在 −1.2%…+1.2% 之间扫一遍，每格 1.2 秒
+   * 结束时把最好的缩放直接应用到所有解码器，并存进 localStorage 下次自动带上。
+   */
+  var Cal = { running: false, stage: '', queue: [], k: 0, rows: [], best: null, timer: null, snap: null, hold: 0 };
+
+  function calDec(bandKey, sp) {
+    for (var i = 0; i < decoders.length; i++) {
+      if (decoders[i].band.key === bandKey && decoders[i].symMs === sp) return decoders[i];
+    }
+    return null;
+  }
+
+  function calMuteAll(except) {
+    decoders.forEach(function (d) { d.muted = (except && d !== except); });
+  }
+
+  function calStart() {
+    Cal.running = true;
+    Cal.queue = [];
+    Cal.rows = [];
+    Cal.best = null;
+    Cal.stage = 'A';
+    Cal.k = 0;
+    Ultra.BANDS.forEach(function (b) {
+      [16, 24, 32].forEach(function (sp) { Cal.queue.push({ band: b.key, bname: b.name, sp: sp, scale: null }); });
+    });
+    $('btnCal').disabled = true;
+    $('btnCalStop').disabled = false;
+    log('自动校正开始：阶段 A（9 格频带×符号，每格 1.8 秒）');
+    calNext();
+  }
+
+  function calNext() {
+    if (!Cal.running) return;
+    clearTimeout(Cal.timer);
+    if (Cal.k >= Cal.queue.length) { calFinishStage(); return; }
+    var cell = Cal.queue[Cal.k];
+    var d = calDec(cell.band, cell.sp);
+    if (!d) { Cal.k++; calNext(); return; }
+    calMuteAll(d);
+    if (cell.scale != null) d.forceScale = cell.scale; else { d.forceScale = null; }
+    Cal.snap = { pk: d.stat.pk, sy: d.stat.sync, cr: d.stat.crc, mg: d.lastMargin };
+    Cal.hold = Cal.stage === 'A' ? 1800 : 1200;
+    $('calStat').textContent = '阶段 ' + Cal.stage + ' · ' + cell.bname + '/' + cell.sp + 'ms' +
+      (cell.scale != null ? ' ×' + cell.scale.toFixed(4) : '') + ' · ' + (Cal.k + 1) + '/' + Cal.queue.length;
+    Cal.timer = setTimeout(function () {
+      var dd = calDec(cell.band, cell.sp);
+      if (!dd) { Cal.k++; calNext(); return; }
+      var pk = dd.stat.pk - Cal.snap.pk;
+      var sy = dd.stat.sync - Cal.snap.sy;
+      var cr = dd.stat.crc - Cal.snap.cr;
+      Cal.rows.push({ stage: Cal.stage, band: cell.band, bname: cell.bname, sp: cell.sp, scale: cell.scale,
+        pk: pk, sy: sy, crcN: cr, bad: sy + cr, mg: dd.lastMargin || 0 });
+      if (cell.scale != null) {
+        diagLines.push(new Date().toTimeString().slice(0, 8) + ' SCALE ' + cell.bname + '/' + cell.sp + 'ms ×' +
+          cell.scale.toFixed(4) + ' 包=' + pk + ' 失配=' + (sy + cr) + ' 边距=' + (dd.lastMargin || 0).toFixed(1) + 'dB');
+      }
+      Cal.k++;
+      calNext();
+    }, Cal.hold);
+  }
+
+  function calFinishStage() {
+    if (Cal.stage === 'A') {
+      var best = null;
+      Cal.rows.forEach(function (r) {
+        if (!best || r.pk > best.pk || (r.pk === best.pk && r.mg > best.mg)) best = r;
+      });
+      if (!best || best.pk <= 0) {
+        // 一格都没解出：退一步，用「同步命中多」来选，至少能定位到能听见的那档
+        Cal.stage = 'A2';
+        Cal.queue = [];
+        Cal.k = 0;
+        Ultra.BANDS.forEach(function (b) {
+          [16, 24, 32].forEach(function (sp) { Cal.queue.push({ band: b.key, bname: b.name, sp: sp, scale: null, fallback: true }); });
+        });
+        log('阶段 A 一格都没解出：改用「锁上的次数」重跑一遍（先把音量调到响一档更保险）', '#b4791f');
+        calNext();
+        return;
+      }
+      Cal.best = best;
+      log('阶段 A 结论：' + best.bname + '/' + best.sp + 'ms 最好（' + best.pk + ' 包，边距 ' + best.mg.toFixed(0) + ' dB）', '#0a5f4f');
+      Cal.stage = 'B';
+      Cal.queue = [];
+      Cal.k = 0;
+      for (var s = -0.012; s <= 0.0121; s += 0.001) {
+        Cal.queue.push({ band: best.band, bname: best.bname, sp: best.sp, scale: 1 + s });
+      }
+      log('阶段 B 开始：在 ' + best.bname + '/' + best.sp + 'ms 上扫频率缩放 −1.2%…+1.2%（25 格）');
+      calNext();
+      return;
+    }
+    calFinish();
+  }
+
+  function calFinish() {
+    clearTimeout(Cal.timer);
+    Cal.running = false;
+    calMuteAll(null);
+    $('btnCal').disabled = false;
+    $('btnCalStop').disabled = true;
+    $('calStat').textContent = '完成';
+
+    var rowsB = Cal.rows.filter(function (r) { return r.stage === 'B'; });
+    var pickB = null;
+    rowsB.forEach(function (r) { if (!pickB || r.pk > pickB.pk || (r.pk === pickB.pk && r.mg > pickB.mg)) pickB = r; });
+
+    var out = [];
+    out.push('# UltraLink 一键校正报告 ' + new Date().toString());
+    out.push('# 采样率=' + (ctx ? ctx.sampleRate : '?') + ' 麦克风=' + ($('dMic') ? $('dMic').textContent : '?'));
+    out.push('');
+    out.push('阶段 A · 频带×符号（每格 1.8 秒）');
+    Cal.rows.filter(function (r) { return r.stage !== 'B'; }).forEach(function (r) {
+      out.push('  ' + pad(r.bname, 6) + '/' + pad(r.sp, 2) + 'ms  解出=' + pad(r.pk, 3) + ' 锁上=' + pad(r.sy, 3) +
+        ' CRC挂=' + pad(r.crcN, 3) + ' 边距=' + (r.mg ? r.mg.toFixed(1) : '-') + ' dB');
+    });
+
+    if (rowsB.length) {
+      out.push('');
+      out.push('阶段 B · 频率缩放（' + (pickB ? pickB.bname + '/' + pickB.sp + 'ms' : '') + '，每格 1.2s）');
+      rowsB.forEach(function (r) {
+        out.push('  ×' + r.scale.toFixed(4) + '  解出=' + pad(r.pk, 3) + ' 锁上=' + pad(r.sy, 3) + ' CRC挂=' + pad(r.crcN, 3) +
+          ' 边距=' + (r.mg ? r.mg.toFixed(1) : '-') + ' dB' + (r.pk > 0 ? '  ← 这个能出包' : ''));
+      });
+    }
+
+    out.push('');
+    if (pickB && pickB.pk > 0) {
+      Ultra.setForcedScale(pickB.scale);
+      decoders.forEach(function (d) { d.forceScale = pickB.scale; d.fScale = pickB.scale; });
+      $('rCal').value = Math.round((pickB.scale - 1) * 1000);
+      $('vCal').textContent = ((pickB.scale - 1) * 1000 > 0 ? '+' : '') +
+        ((pickB.scale - 1) * 1000).toFixed(1) + '‰';
+      out.push('结论：' + pickB.bname + '/' + pickB.sp + 'ms，频率缩放 ×' + pickB.scale.toFixed(4) +
+        '（' + ((pickB.scale - 1) * 1000).toFixed(1) + '‰），已应用到全部解码器。');
+      out.push('发送端请照这个设置：' + pickB.bname + ' 档 + ' + pickB.sp + 'ms 符号。');
+      try {
+        localStorage.setItem('ultra-calib', JSON.stringify({ band: pickB.band, sp: pickB.sp, scale: pickB.scale }));
+      } catch (e) {}
+      log('校正成功：' + pickB.bname + '/' + pickB.sp + 'ms ×' + pickB.scale.toFixed(4) + '，已应用', '#0a5f4f');
+    } else if (Cal.best && Cal.best.pk > 0) {
+      out.push('结论：能出包的是 ' + Cal.best.bname + '/' + Cal.best.sp + 'ms，但频率扫描没找到更好的点，保持自动补偿。');
+      out.push('发送端请用：' + Cal.best.bname + ' 档 + ' + Cal.best.sp + 'ms 符号。');
+      try { localStorage.setItem('ultra-calib', JSON.stringify({ band: Cal.best.band, sp: Cal.best.sp, scale: 1 })); } catch (e) {}
+      log('校正：' + Cal.best.bname + '/' + Cal.best.sp + 'ms 可出包，缩放保持自动', '#0a5f4f');
+    } else {
+      // 一格都没出包：退而求其次，按「锁上/失配次数」挑一格，至少能指出哪档听得见
+      var loud = null;
+      Cal.rows.forEach(function (r) {
+        var score = r.sy + r.crcN;
+        if (!loud || score > (loud.sy + loud.crcN) || (score === (loud.sy + loud.crcN) && r.mg > loud.mg)) loud = r;
+      });
+      out.push('结论：一排试完，一格都没解出包。');
+      if (loud && (loud.sy + loud.crcN) > 0) {
+        out.push('  最像有信号的一格：' + loud.bname + '/' + loud.sp + 'ms（锁上 ' + loud.sy + ' 次、CRC 失败 ' +
+          loud.crcN + ' 次、边距 ' + (loud.mg || 0).toFixed(0) + ' dB）');
+        out.push('  说明声音进得来但这组参数还没对上，或反射/失真太重。按下面顺序查：');
+      } else {
+        out.push('  9 格全都没锁上过，声音基本没进麦克风。按下面顺序查：');
+      }
+      out.push('  1. 音量：发送端调到「响」，距离 30–50 cm，喇叭正对麦克风');
+      out.push('  2. 别贴着墙面/桌面，反射会毁掉符号（本版已只判符号尾部，但反射太强仍不行）');
+      out.push('  3. 看「频带能量」哪一档跳起来；全都不动就是硬件把这几段滤掉了');
+      out.push('  4. 把下面的「诊断日志」整段复制发回作者');
+      log('校正失败：一格都没解出，请看报告里的排查顺序', '#c0392b');
+    }
+
+    $('calOut').value = out.join('\n');
+    out.forEach(function (l) { diagLines.push('CAL ' + l); });
+    if (diagLines.length > DIAG_MAX) diagLines = diagLines.slice(-DIAG_MAX);
+    var box = $('diagBox'); if (box) box.value = diagLines.join('\n');
+    $('diagCnt').textContent = diagLines.length + ' 行';
   }
 
   /* ---------- 诊断日志（环形缓冲 200 行，可复制/下载） ---------- */
@@ -587,6 +787,35 @@ var App = (function () {
 
     /* 想让人耳听不到，唯一有效的旋钮是「幅度」：失真随幅度按平方/立方掉。
      * 代价是能量少了，用更长的符号补回来。 */
+    /* 循环发同一个短包，给对端的「一键自动校正」当靶子用；再点一次停。 */
+    loopCal: function () {
+      var btn = $('btnLoop');
+      if (loopTimer) {
+        clearTimeout(loopTimer);
+        loopTimer = null;
+        btn.textContent = '循环发校准包';
+        $('loopCnt').textContent = '已停（共发 ' + loopN + ' 次）';
+        log('循环校准包已停，共 ' + loopN + ' 次');
+        return;
+      }
+      ensureCtx();
+      loopN = 0;
+      btn.textContent = '停止循环（正在发…）';
+      var pkt = Ultra.buildPacket(Ultra.chunkText('CAL', 8)[0]);
+      var idx = 0;
+      function step() {
+        if (!loopTimer) return;
+        var b = autoBand ? Ultra.BANDS[idx++ % Ultra.BANDS.length] : band;
+        loopN++;
+        $('loopCnt').textContent = '已发 ' + loopN + ' 次 · ' + b.name + '/' + symMs + 'ms';
+        tx.send(pkt, b, symMs, function () {
+          loopTimer = setTimeout(step, 200);
+        });
+      }
+      loopTimer = setTimeout(step, 0);   // 用 setTimeout 让「停止」能打断
+      log('开始循环发校准包：' + (autoBand ? '自动三档轮流' : band.name) + ' · ' + symMs + 'ms');
+    },
+
     quietPreset: function () {
       this.gain(0.35);
       this.speed(32);
@@ -625,6 +854,47 @@ var App = (function () {
       }
     },
 
+    autoCal: function () {
+      if (Cal.running) return;
+      if (!running) {
+        // 还没开监听就直接开，然后等 1 秒让缓冲填起来再开始扫
+        this.startRx();
+        setTimeout(function () { if (running) calStart(); else log('麦克风没起来，先点「开始监听」', '#c0392b'); }, 1200);
+        return;
+      }
+      calStart();
+    },
+
+    calStop: function () {
+      clearTimeout(Cal.timer);
+      Cal.running = false;
+      calMuteAll(null);
+      $('btnCal').disabled = false;
+      $('btnCalStop').disabled = true;
+      $('calStat').textContent = '已停止（未应用结果）';
+      log('自动校正已停止');
+    },
+
+    calSelect: function () {
+      var box = $('calOut');
+      if (!box) return;
+      box.focus();
+      box.select();
+      try { box.setSelectionRange(0, box.value.length); } catch (e) {}
+      log('报告已全选，长按/右键复制');
+    },
+
+    calCopy: function () {
+      var s = $('calOut').value || '';
+      if (!s || s === '（未校正）') { log('还没有报告，先跑一次校正'); return; }
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(s).then(
+          function () { log('报告已复制'); },
+          function () { App.calSelect(); }
+        );
+      } else { App.calSelect(); }
+    },
+
     calib: function (permille) {
       var k = permille ? 1 + permille / 1000 : 0;   // ±1.0% 对应 ±10‰
       Ultra.setForcedScale(k || 0);
@@ -647,7 +917,7 @@ var App = (function () {
         var src = ctx.createMediaStreamSource(stream);
         proc.onaudioprocess = function (ev) {
           var chunk = new Float32Array(ev.inputBuffer.getChannelData(0));
-          for (var i = 0; i < decoders.length; i++) decoders[i].push(chunk);
+          for (var i = 0; i < decoders.length; i++) if (!decoders[i].muted) decoders[i].push(chunk);
           meterTick(chunk);
         };
         src.connect(proc);
@@ -775,6 +1045,16 @@ App.repeat(2);
   if (Ultra.BANDS.length < 3) {
     log('内核还是旧版（只有 ' + Ultra.BANDS.length + ' 档）：强制刷新页面（长按刷新 / 清缓存）', '#c0392b');
   }
+  // 上次校正的结果直接带上，省得每次重来
+  try {
+    var saved = JSON.parse(localStorage.getItem('ultra-calib') || 'null');
+    if (saved && saved.scale) {
+      Ultra.setForcedScale(saved.scale);
+      decoders.forEach(function (d) { d.forceScale = saved.scale; d.fScale = saved.scale; });
+      log('沿用上次校正：' + (saved.band || '?') + '/' + (saved.sp || '?') + 'ms ×' + saved.scale.toFixed(4));
+      if ($('calOut')) $('calOut').value = '（沿用上次校正）' + (saved.band || '') + '/' + (saved.sp || '') + 'ms ×' + saved.scale.toFixed(4);
+    }
+  } catch (e) {}
   var row = document.getElementById('bandRow');
   var ab = document.createElement('button');
   ab.className = 'pill';

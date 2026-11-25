@@ -386,7 +386,8 @@
     S.baseDb = base;
 
     finishSweep(false);
-    renderResult();
+    verdict();
+    drawResponse();
   }
 
   function finishSweep(aborted) {
@@ -433,6 +434,13 @@
     var firstDrop = dropAt(-6);
     var tier, cls, text;
 
+    if (!isFinite(S.baseDb)) {
+      $('#verdict').className = 'verdict warn';
+      $('#verdict').innerHTML = '扫描跑完了，但<b>完全没有回采到信号</b>：麦克风没授权或被静音，' +
+        '也可能是这台设备根本没有可用的喇叭（台式机没插耳机就是这种情况）。插上耳机或换一台再测。';
+      $('#tblResult').innerHTML = '';
+      return;
+    }
     var upper = f6 || firstDrop || 0;
     if (upper >= 21000) {
       tier = '宽'; cls = 'verdict';
@@ -462,7 +470,7 @@
 
     var rows = [
       ['输出天花板（sr/2）', fmtHz(S.nyq)],
-      ['基准 0 dB 参考', '3 kHz 以下最强点（' + fmtDb(S.baseDb || 0) + ' dBFS）'],
+      ['基准 0 dB 参考', '3 kHz 以下最强点（' + fmtDb(S.baseDb) + '）'],
       ['-6 dB 上限', f6 ? fmtHz(f6) : '未出现（全程高于 -6 dB）'],
       ['-12 dB 上限', f12 ? fmtHz(f12) : '未出现'],
       ['-30 dB 上限（基本听不见）', f30 ? fmtHz(f30) : '未出现'],
@@ -643,7 +651,12 @@
 
   function payload() {
     var pts = S.points.map(function (f, i) {
-      return { f: Math.round(f), db: +(S.lastRaw ? S.lastRaw[i] : 0).toFixed(2), rel: +(S.rel[i] || 0).toFixed(2) };
+      var raw = S.lastRaw ? S.lastRaw[i] : NaN;
+      return {
+        f: Math.round(f),
+        db: isFinite(raw) ? +raw.toFixed(2) : null,
+        rel: isFinite(S.rel[i]) ? +S.rel[i].toFixed(2) : null
+      };
     });
     return {
       tool: 'hardware-boundary-sweep',
@@ -663,7 +676,7 @@
   }
 
   function exportJson() {
-    if (!S.measured) { alert('先跑一遍闭环扫描再导出。'); return; }
+    if (!S.measured) { toast('先跑一遍闭环扫描再导出。', true); return; }
     var text = JSON.stringify(payload(), null, 2);
     var blob = new Blob([text], { type: 'application/json' });
     var url = URL.createObjectURL(blob);
@@ -693,9 +706,9 @@
       navigator.clipboard.writeText(lines).then(function () {
         $('#btnCopy').textContent = '已复制';
         setTimeout(function () { $('#btnCopy').textContent = '复制结论'; }, 1500);
-      }).catch(function () { alert(lines); });
+      }).catch(function () { toast(lines, true); });
     } else {
-      alert(lines);
+      toast(lines, true);
     }
   }
 
@@ -705,11 +718,13 @@
     $('#btnInit').addEventListener('click', async function () {
       try {
         await ensureCtx();
-        if (S.ctx.state !== 'running') await S.ctx.resume();
-        $('#initMeta').textContent = '音频上下文已启动 · ' + S.sr + ' Hz · 天花板 ' + fmtHz(S.nyq);
+        await resumeSafe();
+        $('#initMeta').textContent = '音频上下文已启动 · ' + S.sr + ' Hz · 天花板 ' + fmtHz(S.nyq) +
+          (S.ctx.state === 'running' ? '' : '（引擎停在 ' + S.ctx.state + '，这台设备可能没有可用音频输出）');
         $('#btnInit').disabled = true;
         $('#btnInit').textContent = '音频已启用';
-      } catch (e) { alert('音频启动失败：' + e.message); }
+        if (S.ctx.state !== 'running') toast('音频引擎没进入 running 状态，多半没有音频输出设备。', true);
+      } catch (e) { toast('音频启动失败：' + e.message, true); }
     });
 
     $('#btnRecheck').addEventListener('click', probeEnv);
@@ -731,7 +746,9 @@
       }
     });
 
-    $('#btnRun').addEventListener('click', function () { runSweep().catch(function (e) { alert(e.message); finishSweep(true); }); });
+    $('#btnRun').addEventListener('click', function () {
+      runSweep().catch(function (e) { toast(e.message || String(e), true); finishSweep(true); });
+    });
     $('#btnStop').addEventListener('click', function () { S.abort = true; });
 
     // TX
@@ -744,7 +761,7 @@
         var f = +rng.value, amp = +$('#inAmp').value;
         setTone(f, amp);
         S.curFreq = f;
-      } catch (e) { alert(e.message); }
+      } catch (e) { toast(e.message || String(e), true); }
     });
     $('#btnToneOff').addEventListener('click', function () { stopTone(); S.curFreq = 0; });
 
@@ -773,7 +790,7 @@
       try {
         await ensureCtx(); await openMic();
         $('#rxMeta').textContent = '监听中…看实时频谱';
-      } catch (e) { alert('麦克风启动失败：' + e.message); }
+      } catch (e) { toast('麦克风启动失败：' + e.message, true); }
     });
     $('#btnRxStop').addEventListener('click', function () {
       closeMic(); $('#rxMeta').textContent = '已停止';
@@ -781,7 +798,7 @@
     $('#btnPeak').addEventListener('click', async function () {
       try {
         await ensureCtx(); await openMic();
-      } catch (e) { alert('麦克风启动失败：' + e.message); return; }
+      } catch (e) { toast('麦克风启动失败：' + e.message, true); return; }
       var best = { hz: 0, db: -Infinity };
       var t0 = Date.now();
       var iv = setInterval(function () {
