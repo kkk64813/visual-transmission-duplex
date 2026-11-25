@@ -59,6 +59,12 @@
   .prog{height:6px;background:#eef3f1;border-radius:6px;overflow:hidden;margin-top:10px}
   .prog i{display:block;height:100%;width:0;background:var(--accent);transition:width .2s}
   .hint{font-size:12px;color:var(--muted);margin-top:8px;line-height:1.7}
+  .dbg{font-size:12px;color:var(--muted);line-height:1.9;font-variant-numeric:tabular-nums;
+    font-family:ui-monospace,Menlo,Consolas,monospace;background:#fbfcfc;border:1px solid #eff4f2;
+    border-radius:10px;padding:8px 10px}
+  .dbg b{color:var(--ink);font-weight:600}
+  .dbg .row2{display:grid;grid-template-columns:96px 1fr 46px 46px 46px;gap:6px}
+  .dbg .row2 span:last-child{text-align:right}
   .warn{background:var(--warn-bg);border:1px solid #f0e2c4;color:#7a5416;border-radius:10px;
     padding:10px 12px;font-size:13px;line-height:1.7;margin-bottom:12px}
   .hide{display:none}
@@ -107,6 +113,21 @@
     </div>
 
     <div class="card">
+      <h3>解码信息</h3>
+      <div class="dbg">
+        <div>采样率 <b id="dSr">—</b> · 麦克风原始 <b id="dMic">—</b></div>
+        <div>此刻最强音 <b id="dPeak">—</b> <span class="hint" style="margin:0">（每 0.5 秒量一次，看它到底落在几千赫）</span></div>
+        <div>缓冲 <b id="dBuf">—</b> · 扫描位置 <b id="dScan">—</b></div>
+      </div>
+      <div id="dDec" class="dbg" style="margin-top:8px"></div>
+      <div class="hint">
+        <b>怎么读：</b>同步命中高、CRC 少 → 链路可以；同步一直 0 → 声音没进来或频带不对；
+        CRC 大量失败但同步有 → 音节对齐/时钟漂移，把符号调到 24ms 再试。
+        最后一列「边距」是判决把握，低于 6 dB 基本就是噪声在乱点了。
+      </div>
+    </div>
+
+    <div class="card">
       <h3>收到的文字</h3>
       <div class="out" id="outText">（空）</div>
       <div id="fileBox" class="hide" style="margin-top:10px">
@@ -136,6 +157,15 @@
         <button id="btnProbe" onclick="App.probe()">发探测音（1.2 秒）</button>
         <span class="hint" style="margin:0">先探测再发送，能省掉来回试。</span>
       </div>
+      <div class="row" style="margin-top:8px">
+        <button class="pill" data-gn="0.5" onclick="App.gain(0.5)">音量 · 轻</button>
+        <button class="pill on" data-gn="0.72" onclick="App.gain(0.72)">音量 · 标准</button>
+        <button class="pill" data-gn="0.9" onclick="App.gain(0.9)">音量 · 响</button>
+      </div>
+      <div class="hint">超声放得越响，越容易被喇叭的非线性“翻译”成人耳听得见的嗡嗡声。真听到了就调轻一档，接收端的边距通常还够。</div>
+      <div class="dbg" style="margin-top:10px">
+        <div>本机采样率 <b id="sSr">—</b> · 实际发出 <b id="sOut">—</b> <span class="hint" style="margin:0">（喇叭真的在放几千赫，这里显示的不是设定值）</span></div>
+      </div>
     </div>
 
     <div class="card">
@@ -143,6 +173,7 @@
       <div class="row">
         <button class="pill on" data-sp="16" onclick="App.speed(16)">快 · 16ms</button>
         <button class="pill" data-sp="24" onclick="App.speed(24)">稳 · 24ms</button>
+        <button class="pill" data-sp="32" onclick="App.speed(32)">很稳 · 32ms</button>
       </div>
       <div class="row" style="margin-top:8px">
         <button class="pill on" data-rp="2" onclick="App.repeat(2)">每包发 2 遍</button>
@@ -249,7 +280,7 @@ var App = (function () {
   /* ---------- 接收 ---------- */
   function makeDecoders(sr) {
     decoders = [];
-    var speeds = [16, 24];
+    var speeds = [16, 24, 32];
     Ultra.BANDS.forEach(function (b) {
       speeds.forEach(function (sp) {
         var d = new Ultra.StreamDecoder(sr, b, sp);
@@ -309,25 +340,102 @@ var App = (function () {
     log('文件完成：' + fileState.name, '#0a5f4f');
   }
 
+  var tickN = 0, lastChunk = null;
+
   function meterTick(chunk) {
-    var half = Math.min(chunk.length, Math.round((ctx ? ctx.sampleRate : 48000) * 0.09));
+    lastChunk = chunk;
+    var sr = ctx ? ctx.sampleRate : 48000;
+    var half = Math.min(chunk.length, Math.round(sr * 0.09));
     var slice = chunk.subarray(chunk.length - half);
     Ultra.BANDS.forEach(function (b) {
-      var e = Ultra.bandEnergy(slice, ctx ? ctx.sampleRate : 48000, b);
-      // 以「峰/均值」做可分辨度，另给一个绝对电平
-      var lvl = e.peak > 0 ? 20 * Math.log10(1 + e.peak / Math.max(1e-9, e.mean)) : 0;
+      var e = Ultra.bandEnergy(slice, sr, b);
       var lvl2 = e.peak > 0 ? Math.min(100, Math.round(20 * Math.log10(e.peak + 1) * 3)) : 0;
       var bar = $('bar-' + b.key), val = $('val-' + b.key);
       if (!bar) return;
       bar.style.width = lvl2 + '%';
       val.textContent = lvl2 + '%';
     });
+
+    tickN++;
+    if (tickN % 6 === 0) {                     // 约每 0.5 秒量一次峰值频率
+      var pk = Ultra.peakFreq(slice, sr, 16000, 22200, 60);
+      var el = $('dPeak');
+      if (el) {
+        var strong = pk.v > 0 && pk.v * 1000 > (Ultra.bandEnergy(slice, sr, Ultra.BANDS[0]).mean + 1e-9);
+        el.textContent = pk.f ? (pk.f + ' Hz') : '—';
+        el.style.color = pk.f >= 18000 ? '#0a5f4f' : (pk.f ? '#c0392b' : '');
+      }
+      updateDbg();
+    }
+  }
+
+  /* 解码信息表：每个解码器一行（频带 × 符号长度） */
+  function buildDbgRows() {
+    var box = $('dDec');
+    if (!box) return;
+    box.innerHTML = '<div class="row2" style="color:#0a5f4f"><span>档 / 符号</span><span>状态</span><span>同步</span><span>CRC</span><span>边距</span></div>';
+    Ultra.BANDS.forEach(function (b) {
+      [16, 24, 32].forEach(function (sp) {
+        var d = document.createElement('div');
+        d.className = 'row2';
+        d.id = 'dec-' + b.key + '-' + sp;
+        d.innerHTML = '<span>' + b.name + '/' + sp + 'ms</span><span class="st">待机</span><span class="sy">0</span><span class="cr">0</span><span class="mg">—</span>';
+        box.appendChild(d);
+      });
+    });
+  }
+
+  function updateDbg() {
+    var sr = ctx ? ctx.sampleRate : 0;
+    if ($('dSr')) $('dSr').textContent = sr ? (sr + ' Hz') : '—';
+    if ($('dBuf')) $('dBuf').textContent = decoders.length ? (decoders[0].fill + ' 采样') : '—';
+    if ($('dScan')) $('dScan').textContent = decoders.length ? decoders[0].scanAbs : '—';
+    decoders.forEach(function (d) {
+      var row = $('dec-' + d.band.key + '-' + d.symMs);
+      if (!row) return;
+      var st = row.querySelector('.st');
+      var okN = d.stat.pk, crcN = d.stat.crc, syN = d.stat.sync;
+      st.textContent = okN ? '解出 ' + okN : (syN ? '锁不上' : '待机');
+      st.style.color = okN ? '#0a5f4f' : (syN ? '#b4791f' : '');
+      row.querySelector('.sy').textContent = syN;
+      row.querySelector('.cr').textContent = crcN;
+      var mg = row.querySelector('.mg');
+      mg.textContent = d.lastMargin ? (d.lastMargin.toFixed(0) + ' dB') : '—';
+      mg.style.color = d.lastMargin >= 6 ? '#0a5f4f' : (d.lastMargin ? '#c0392b' : '');
+    });
+  }
+
+  /* 发送端自检：量自己的喇叭到底在放几千赫 */
+  var outAnalyser = null, outTimer = null;
+  function outPeakOnce() {
+    if (!outAnalyser) return;
+    var n = outAnalyser.fftSize || 4096;
+    var buf = new Float32Array(n);
+    outAnalyser.getFloatTimeDomainData(buf);
+    var sr = ctx ? ctx.sampleRate : 48000;
+    var pk = Ultra.peakFreq(buf, sr, 16000, 22200, 60);
+    var el = $('sOut');
+    if (el) {
+      el.textContent = pk.v > 1e-6 ? (pk.f + ' Hz') : '（静音）';
+      el.style.color = pk.f >= 18000 ? '#0a5f4f' : (pk.v > 1e-6 ? '#c0392b' : '');
+    }
   }
 
   /* ---------- 发送 ---------- */
   function ensureCtx() {
-    if (!ctx) { ctx = Ultra.makeCtx(); tx = new Ultra.Tx(ctx); }
+    if (!ctx) {
+      ctx = Ultra.makeCtx();
+      tx = new Ultra.Tx(ctx);
+      try {
+        outAnalyser = ctx.createAnalyser();
+        outAnalyser.fftSize = 4096;
+        outAnalyser.connect(ctx.destination);
+        tx.out = outAnalyser;               // 声音经 analyser 再出，才能量到自己
+      } catch (e) { outAnalyser = null; }
+    }
     if (ctx.state === 'suspended') ctx.resume();
+    if ($('sSr')) $('sSr').textContent = ctx.sampleRate + ' Hz';
+    if (!outTimer) outTimer = setInterval(outPeakOnce, 200);
     return ctx;
   }
 
@@ -350,6 +458,7 @@ var App = (function () {
   }
 
   return {
+    dbgRows: buildDbgRows,
     role: function (r) {
       $('panelRx').className = r === 'rx' ? '' : 'hide';
       $('panelTx').className = r === 'tx' ? '' : 'hide';
@@ -379,6 +488,14 @@ var App = (function () {
       });
     },
 
+    gain: function (v) {
+      var g = Ultra.setGain(v);
+      Array.prototype.forEach.call(document.querySelectorAll('[data-gn]'), function (b) {
+        b.className = 'pill' + (parseFloat(b.dataset.gn) === v ? ' on' : '');
+      });
+      log('发送音量 ' + g.toFixed(2));
+    },
+
     startRx: function () {
       if (running) return;
       Ultra.openMic().then(function (stream) {
@@ -398,6 +515,14 @@ var App = (function () {
         $('btnMic').disabled = true;
         $('btnStop').disabled = false;
         $('stSr').textContent = ctx.sampleRate + ' Hz';
+        if ($('dSr')) $('dSr').textContent = ctx.sampleRate + ' Hz';
+        try {
+          var trk = stream.getAudioTracks()[0];
+          var set = trk && trk.getSettings ? trk.getSettings() : {};
+          if ($('dMic')) $('dMic').textContent = (set.sampleRate ? set.sampleRate + ' Hz' : '未知') +
+            (set.channelCount ? ' · ' + set.channelCount + 'ch' : '');
+        } catch (e) { if ($('dMic')) $('dMic').textContent = '未知'; }
+        buildDbgRows();
         setState('监听中', true);
         log('开始监听 · ' + ctx.sampleRate + ' Hz · ' + decoders.length + ' 个解码器');
         if (ctx.sampleRate < 48000) log('注意：设备只给到 ' + ctx.sampleRate + ' Hz，20.5k 档接近奈奎斯特，可能解不出，建议用 18.1k 档', '#b4791f');
@@ -512,6 +637,7 @@ App.repeat(2);
     var n = f.value.length;
     document.getElementById('txtInfo').textContent = n ? (n + ' 字 · 约 ' + Math.max(1, Math.round(n / 16)) + ' 秒') : '';
   });
+  App.dbgRows();
 })();
 </script>
 </body>

@@ -21,7 +21,7 @@
   var SR = 48000;
   var TONES = 8;
   var SYNC = [1, 5, 3, 7, 2, 6, 4, 0];
-  var GAIN = 0.85;          // 超声段衰减大，幅度给足（0.85 仍不削顶）
+  var GAIN = 0.72;          // 默认标准音量：够响，又不至于让喇叭非线性生出人耳可闻的差频
   var RAMP_MS = 3;
   var TWO_PI = Math.PI * 2;
 
@@ -209,7 +209,46 @@
     return { peak: peak, mean: mean, ratio: mean > 0 ? peak / mean : 0, freqs: out };
   }
 
-  /* ---------------- 流式解码器（每档频带各跑一个） ---------------- */
+  /* 逐音能量 + 判决 + 边距（边距=最强音比次强音高多少 dB，是“判得准不准”的直接指标）
+   * span：在该偏移附近 ±span 个采样内找边距最大的位置，返回 delta 供调用方跟随时钟漂移。 */
+  function classifyBest(x, off, len, sr, band, span) {
+    var best = { sym: 0, margin: -99, delta: 0, e: null };
+    var step = Math.max(1, Math.round((span || 0) / 2));
+    for (var d = -(span || 0); d <= (span || 0); d += step) {
+      var o = off + d;
+      if (o < 0 || o + len > x.length) continue;
+      var top = -1, second = -1, topT = 0, es = new Array(TONES);
+      for (var t = 0; t < TONES; t++) {
+        var m = goertzel(x, o, len, toneFreq(band, t), sr);
+        es[t] = m;
+        if (m > top) { second = top; top = m; topT = t; }
+        else if (m > second) second = m;
+      }
+      var margin = 20 * Math.log10((top + 1e-12) / (second + 1e-12));
+      if (margin > best.margin) best = { sym: topT, margin: margin, delta: d, e: es };
+    }
+    return best;
+  }
+
+  /* 在 [lo,hi] 里扫峰值频率：用来客观回答“实际发/收的到底是几千赫” */
+  function peakFreq(x, sr, lo, hi, step) {
+    step = step || 60;
+    var n = Math.min(x.length, Math.round(sr * 0.045));    // 取最后 45ms，够稳又便宜
+    var off = x.length - n;
+    var best = { f: 0, v: -1 };
+    for (var f = lo; f <= hi; f += step) {
+      var m = goertzel(x, off, n, f, sr);
+      if (m > best.v) best = { f: f, v: m };
+    }
+    // 在峰值附近再做一遍细扫（20 Hz 精度）
+    var lo2 = Math.max(lo, best.f - step), hi2 = Math.min(hi, best.f + step);
+    for (var g = lo2; g <= hi2; g += 20) {
+      var m2 = goertzel(x, off, n, g, sr);
+      if (m2 > best.v) best = { f: g, v: m2 };
+    }
+    return best;
+  }
+  /* ---------------- 流式解码器（每档频带 × 每种符号长度各跑一个） ---------------- */
   function StreamDecoder(sampleRate, band, symMs) {
     this.sr = sampleRate || SR;
     this.band = band || BANDS[2];
@@ -226,6 +265,10 @@
     this.onError = null;
     this.packets = 0;
     this.errors = 0;
+    this.stat = { sync: 0, crc: 0, pk: 0 };
+    this.lastMargin = 0;
+    this.lastMinMargin = 0;
+    this.lastDrift = 0;
     this._busy = false;
     this.maxPayload = 200;
   }
@@ -259,12 +302,14 @@
 
     for (var a = start; a <= limit; a += step) {
       var off = a - this.abs0;
-      if (classify(this.buf, off, symLen, this.sr, this.band) !== SYNC[0]) continue;
-      var ok = true;
-      for (var i = 1; i < SYNC.length; i++) {
-        if (classify(this.buf, off + i * symLen, symLen, this.sr, this.band) !== SYNC[i]) { ok = false; break; }
+      // 同步头不再要求 8/8 全中：房间混响、手机 AAC 前处理都会偶尔打错一个音，
+      // 要求全中会导致「一次都锁不上」。现在 ≥6/8 就当候选，最终由 CRC 裁决。
+      var hits = 0;
+      for (var i = 0; i < SYNC.length; i++) {
+        if (classify(this.buf, off + i * symLen, symLen, this.sr, this.band) === SYNC[i]) hits++;
+        if (SYNC.length - i - 1 + hits < SYNC.length - 2) break;   // 不可能达标，早退
       }
-      if (!ok) continue;
+      if (hits < SYNC.length - 2) continue;
 
       // 同步头对上了，但粗搜的步长是 1/4 符号，窗口可能跨在两个符号之间 ——
       // 这时候每个符号都能“勉强”判对，CRC 却会挂。这里做一次亚符号级精修：
@@ -311,17 +356,31 @@
     var need = this.totalSyms * symLen;
     if (base < 0 || base + need > this.fill) return;
 
+    // 逐符号跟随时钟：手机的 DAC 和电脑的 ADC 各走各的晶振，几百 ppm 的偏差
+    // 摊到 2 秒的包上就是几毫秒 —— 后半段的窗口会跨到隔壁符号，CRC 必挂。
+    // 所以每个符号都在 ±1/8 符号内重新找一次最佳位置，把偏差带进下一个符号。
+    var span = Math.max(2, Math.round(symLen / 8));
     var syms = new Uint8Array(this.totalSyms);
+    var cur = base, drift = 0, sumMargin = 0, minMargin = 99;
     for (var i = 0; i < this.totalSyms; i++) {
-      syms[i] = classify(this.buf, base + i * symLen, symLen, this.sr, this.band);
+      var r = classifyBest(this.buf, Math.round(cur), symLen, this.sr, this.band, span);
+      syms[i] = r.sym;
+      sumMargin += r.margin;
+      if (r.margin < minMargin) minMargin = r.margin;
+      drift = drift * 0.6 + r.delta * 0.4;
+      cur += symLen + drift;
     }
-    var syncOk = true;
-    for (var j = 0; j < SYNC.length; j++) {
-      if (syms[j] !== SYNC[j]) { syncOk = false; break; }
-    }
+    this.lastMargin = this.totalSyms ? sumMargin / this.totalSyms : 0;
+    this.lastMinMargin = minMargin;
+    this.lastDrift = drift;
+
+    var syncOk = true, hits = 0;
+    for (var j = 0; j < SYNC.length; j++) if (syms[j] === SYNC[j]) hits++;
+    if (hits < SYNC.length - 2) syncOk = false;
     if (!syncOk) {
       this.errors++;
-      if (this.onError) this.onError('sync');
+      this.stat.sync++;
+      if (this.onError) this.onError('sync', this.lastMargin);
       this.syncAbs = -1;
       this.scanAbs = Math.max(this.scanAbs, base + this.abs0 + 1);
       return;
@@ -330,10 +389,12 @@
     var payload = parsePacket(body);
     if (!payload) {
       this.errors++;
-      if (this.onError) this.onError('crc');
+      this.stat.crc++;
+      if (this.onError) this.onError('crc', this.lastMargin);
     } else {
       this.packets++;
-      if (this.onPacket) this.onPacket(payload);
+      this.stat.pk++;
+      if (this.onPacket) this.onPacket(payload, this.lastMargin);
     }
     this.syncAbs = -1;
     this.scanAbs = Math.max(this.scanAbs, base + this.abs0 + need - symLen);
@@ -429,6 +490,7 @@
   function Tx(ctx) {
     this.ctx = ctx;
     this.busy = false;
+    this.out = null;          // 可插一个 AnalyserNode 做自检
   }
 
   Tx.prototype.play = function (samples, onDone) {
@@ -437,7 +499,7 @@
     buf.getChannelData(0).set(samples);
     var src = self.ctx.createBufferSource();
     src.buffer = buf;
-    src.connect(self.ctx.destination);
+    src.connect(self.out || self.ctx.destination);
     self.busy = true;
     var done = function () { self.busy = false; if (onDone) onDone(); };
     src.onended = done;
@@ -478,6 +540,9 @@
     packetSymbols: packetSymbols,
     makeWaveform: makeWaveform, makeProbe: makeProbe,
     goertzel: goertzel, classify: classify, bandEnergy: bandEnergy,
+    classifyBest: classifyBest, peakFreq: peakFreq,
+    getGain: function () { return GAIN; },
+    setGain: function (g) { GAIN = Math.max(0.1, Math.min(0.98, +g || 0.7)); return GAIN; },
     StreamDecoder: StreamDecoder, Tx: Tx, openMic: openMic, makeCtx: makeCtx,
     utf8: utf8, fromUtf8: fromUtf8,
     chunkText: chunkText, joinText: joinText,

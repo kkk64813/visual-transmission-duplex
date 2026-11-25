@@ -109,5 +109,44 @@ console.log('== 时长/速率换算 ==');
   ok('同包 16ms 下 1.5–2.5 秒', sec16 > 1.5 && sec16 < 2.5, `≈ ${sec16.toFixed(1)}s`);
 }
 
+console.log('== 采样率错配 → 频率整体走形（这是“人耳能听见”的机制）==');
+{
+  const payload = Ultra.buildPacket(Ultra.chunkText('rate', 8)[0]);
+  const wave = Ultra.makeWaveform(payload, SR, Ultra.BANDS[0], 16);
+  const pk = Ultra.peakFreq(wave, SR, 16000, 22000, 60);
+  ok('48k 生成时峰值就是 18.1–19.5k', pk.f >= 18000 && pk.f <= 19600, `peak=${pk.f} Hz`);
+
+  // 把 48k 生成的波形按 44.1k 播出去 ≈ 频率乘 44.1/48
+  const heard = 18100 * 44100 / 48000;
+  ok('44.1k 播放会把它压到人耳可闻区', heard < 18000, `18100 → ${heard.toFixed(0)} Hz`);
+
+  // 用 48k 波形喂 44.1k 解码器：频率对不上，应当一个包都解不出
+  const dec = new Ultra.StreamDecoder(44100, Ultra.BANDS[0], 16);
+  const got = [];
+  dec.onPacket = p => got.push(p);
+  for (let i = 0; i < wave.length; i += 2048) dec.push(wave.subarray(i, Math.min(wave.length, i + 2048)));
+  ok('采样率不匹配时必然解不出（说明这个数必须两端一致）', got.length === 0, `包数=${got.length}`);
+}
+
+console.log('== 两端晶振漂移（500 ppm）==');
+{
+  // 发送端按 48000 采样，接收端采样时钟快 500 ppm → 收到的信号在时间轴上被压缩
+  const payload = Ultra.buildPacket(Ultra.chunkText('漂移测试 drift 500ppm', 8)[0]);
+  const wave = Ultra.makeWaveform(payload, SR, Ultra.BANDS[0], 16);
+  const k = 1.0005;
+  const n = Math.floor(wave.length / k);
+  const drift = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    const s = i * k, i0 = Math.floor(s), f = s - i0;
+    drift[i] = wave[i0] * (1 - f) + (wave[i0 + 1] || 0) * f;
+  }
+  const dec = new Ultra.StreamDecoder(SR, Ultra.BANDS[0], 16);
+  const got = [];
+  dec.onPacket = p => got.push(p);
+  for (let i = 0; i < drift.length; i += 2048) dec.push(drift.subarray(i, Math.min(drift.length, i + 2048)));
+  ok('500 ppm 漂移下仍能解出（逐符号跟随生效）', got.length >= 1, `包数=${got.length} 漂移=${dec.lastDrift.toFixed(1)} 采样`);
+  ok('边距是正数（判决有把握）', dec.lastMargin > 0, `${dec.lastMargin.toFixed(1)} dB`);
+}
+
 console.log(`\n结果：${pass} 通过 / ${fail} 失败`);
 process.exit(fail ? 1 : 0);
