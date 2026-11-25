@@ -164,6 +164,7 @@
           <div>采样率 <b id="dSr">—</b> · 麦克风原始 <b id="dMic">—</b></div>
           <div>缓冲 <b id="dBuf">—</b> · 扫描位置 <b id="dScan">—</b></div>
           <div>收样 <b id="dDrop">—</b> <span class="hint" style="margin:0">（低于 100% = CPU 跟不上，在丢样）</span></div>
+          <div>能量门控 <b id="dGate">—</b> <span class="hint" style="margin:0">（只让有声音的那档跑解码）</span></div>
         </div>
         <div id="dDec" class="dbg" style="margin-top:8px"></div>
         <div class="row" style="margin-top:10px;align-items:center">
@@ -196,6 +197,10 @@
         <span class="hz" id="sOut" style="font-size:22px;color:var(--muted)">静音</span>
         <span class="unit">Hz</span>
         <span class="tag" id="txTag">喇叭此刻在放</span>
+      </div>
+      <div class="live" id="ackLive" style="margin-top:6px;display:none">
+        <span class="hz" id="ackSig" style="font-size:26px;color:var(--accent-2)">安静</span>
+        <span class="tag" id="ackSigTag">回执监听 · 信号强度</span>
       </div>
       <div class="row" style="margin-top:12px" id="bandRow"></div>
       <div class="hint" id="bandNote"></div>
@@ -307,11 +312,11 @@
 
 
 <footer>
-  纯本地：声音只在空气里走，不经过网络。 版本 v2026-11-25m（UI 简化 · 双端实时 Hz · 收齐回执 · 电脑收自动避开 22.3k）返回 <a href="./index.html">首页</a> ·
+  纯本地：声音只在空气里走，不经过网络。 版本 v2026-11-25o（能量门控救手机掉样 · 回执信号强度表 · 回执抬音量 · 收齐回执）返回 <a href="./index.html">首页</a> ·
   双工控制通道见 <a href="./duplex.html">duplex</a>
 </footer>
 
-<script src="ultra-core.js?v=20261125m"></script>
+<script src="ultra-core.js?v=20261125o"></script>
 <script>
 var App = (function () {
   var band = Ultra.BANDS[0];       // 默认 18.1k 实测 18k 听不见
@@ -405,6 +410,42 @@ var App = (function () {
     });
   }
 
+  /* ---------- 频带能量门控 ----------
+   * 手机同时跑 9 个解码器（3 档 × 3 种符号长度）会来不及处理，麦克风回调直接掉样
+   * （实测只收到 60% 采样 → 时间轴被压缩 → 全场解不出来）。这里每块音频先算三档的
+   * 峰值能量（很便宜），只有明显高过底噪的那一档才把样本喂给解码器：
+   * 单档发包时实际只有 3 个解码器在跑，CPU 降到 1/3 左右。 */
+  var gateFloor = {}, gateOn = { mid: true, hi: true, top: true }, gateLogAt = 0;
+  function gateProbe(chunk) {
+    var sr = ctx ? ctx.sampleRate : 48000;
+    var n = Math.min(chunk.length, Math.round(sr * 0.06));
+    if (n < 512) return;
+    var sl = chunk.subarray(chunk.length - n);
+    var any = false;
+    Ultra.BANDS.forEach(function (b) {
+      var e = Ultra.bandEnergy(sl, sr, b).peak;
+      var f = gateFloor[b.key];
+      if (f == null) f = e;
+      if (e < f) f = e;
+      else f = f * 0.995 + e * 0.005;      // 底噪慢慢往上爬，避免一次大声之后永久失灵
+      gateFloor[b.key] = f;
+      var open = e > f * 3.5 && e > 1e-9;
+      gateOn[b.key] = open;
+      if (open) any = true;
+    });
+    /* 三档全静的时候，反正也没有包可解，样本直接丢掉更省 CPU。 */
+    if (any) {
+      var now = performance.now();
+      if (now - gateLogAt > 4000) {
+        gateLogAt = now;
+        var act = Ultra.BANDS.filter(function (b) { return gateOn[b.key]; })
+          .map(function (b) { return b.name; }).join('/');
+        var cnt = decoders.filter(function (d) { return !d.muted && gateOn[d.band.key]; }).length;
+        if ($('dGate')) $('dGate').textContent = act + ' · ' + cnt + ' 个';
+      }
+    }
+  }
+
   /* ---------- 接收 ---------- */
   function makeDecoders(sr) {
     decoders = [];
@@ -421,6 +462,12 @@ var App = (function () {
       });
     });
   }
+
+  /* 回执故意用比用户设定更高的音量：手机一开麦，安卓常把播放路由到听筒，实际很小声，
+   * 再叠上「音量·静默」预设就彻底听不见了。只在这几下播放期间临时抬到 0.9，播完还原。 */
+  var ackPrevGain = null;
+  function ackGainOn() { if (ackPrevGain == null) { ackPrevGain = Ultra.getGain(); Ultra.setGain(0.9); } }
+  function ackGainOff() { if (ackPrevGain != null) { Ultra.setGain(ackPrevGain); ackPrevGain = null; } }
 
   /* 接收端回执：只要还有缺包、链路开着，就每 2.2 秒回一次位图，直到收齐。
    * 以前用「静默 0.9 秒」当触发条件，一旦解码器反复吐同一个包，lastPktAt 永远在刷新，
@@ -439,8 +486,9 @@ var App = (function () {
       var ob = Ultra.bandByKey(ACK_BAND), on = 0, oc = ACK_COPIES + 1;
       log('已收齐 ' + textState.total + '/' + textState.total + '：回一次「全部收到」· ' +
         ob.name + '/' + ACK_SP + 'ms ×' + oc, '#0a5f4f');
+      ackGainOn();
       (function oneOk() {
-        if (on >= oc) return;
+        if (on >= oc) { ackGainOff(); return; }
         on++;
         tx.send(okPkt, ob, ACK_SP, function () { setTimeout(oneOk, 200); });
       })();
@@ -457,8 +505,9 @@ var App = (function () {
     var b = Ultra.bandByKey(ACK_BAND), n = 0;
     log('回执 #' + ackRound + '：已收 ' + (textState.total - miss.length) + '/' + textState.total +
       '，缺第 ' + miss.map(function (x) { return x + 1; }).join('、') + ' 包 · ' + b.name + '/' + ACK_SP + 'ms ×' + ACK_COPIES);
+    ackGainOn();
     (function one() {
-      if (n >= ACK_COPIES) return;
+      if (n >= ACK_COPIES) { ackGainOff(); return; }
       n++;
       tx.send(pkt, b, ACK_SP, function () { setTimeout(one, 200); });
     })();
@@ -472,7 +521,8 @@ var App = (function () {
     if (now - ackLoopAt < 1500) return;
     ackLoopAt = now;
     var pkt = Ultra.buildPacket(Ultra.ackPayload(1, 1, function () { return false; }));
-    tx.send(pkt, Ultra.bandByKey(ACK_BAND), ACK_SP, function () {});
+    ackGainOn();
+    tx.send(pkt, Ultra.bandByKey(ACK_BAND), ACK_SP, function () { ackGainOff(); });
   }
 
   /* ---------- 一键自动校正 ----------
@@ -867,10 +917,47 @@ var App = (function () {
   var ackGot = null, ackStat = null;
 
   function ackClose() {
+    ackGainOff();
+    ackMeterOff();
     try { if (ackProc) ackProc.disconnect(); } catch (e) {}
     try { if (ackSrc) ackSrc.disconnect(); } catch (e) {}
     if (ackMic) { try { ackMic.getTracks().forEach(function (t) { t.stop(); }); } catch (e) {} ackMic = null; }
     ackProc = null; ackSrc = null; ackDec = null; ackBusy = false;
+  }
+
+  /* ---- 回执信号强度表 ----
+   * 以前发端只听「解出/没解出」，分不清三种情况：对方根本没发、发了但电脑听不见、听得到却解不开。
+   * 这里在回执麦克风上直接量 18.1k 那档的峰值与相对底噪的强度，实时显示在发送端。 */
+  var ackFloorDb = null, ackShowAt = 0, ackLastDb = -99, ackLastF = 0;
+  function ackMeter(c) {
+    var sr = ctx ? ctx.sampleRate : 48000;
+    var b = Ultra.bandByKey(ACK_BAND);
+    var e = Ultra.bandEnergy(c, sr, b).peak;
+    var db = 10 * Math.log10(e + 1e-18);
+    if (ackFloorDb == null || db < ackFloorDb) ackFloorDb = db;
+    else ackFloorDb = ackFloorDb * 0.99 + db * 0.01;
+    var rel = db - ackFloorDb;
+    ackLastDb = rel;
+    var now = performance.now();
+    if (now - ackShowAt < 120) return;
+    ackShowAt = now;
+    var pk = Ultra.peakFreq(c, sr, 17500, 19600, 50);
+    ackLastF = pk.f;
+    var el = $('ackSig');
+    if (!el) return;
+    var hot = rel > 6;
+    el.textContent = (pk.f ? pk.f : (hot ? '有信号' : '安静'));
+    el.style.color = hot ? 'var(--accent-2)' : 'var(--muted)';
+    var tg = $('ackSigTag');
+    if (tg) tg.textContent = '回执监听 · 强度 +' + Math.max(0, rel).toFixed(0) + ' dB（相对底噪）';
+  }
+  function ackMeterReset() {
+    ackFloorDb = null; ackLastDb = -99; ackLastF = 0;
+    var lv = $('ackLive'); if (lv) lv.style.display = 'flex';
+    var el = $('ackSig'); if (el) { el.textContent = '聆听中'; el.style.color = 'var(--muted)'; }
+  }
+  function ackMeterOff() {
+    var lv = $('ackLive'); if (lv) lv.style.display = 'none';
   }
 
   function ackOpen() {
@@ -897,6 +984,7 @@ var App = (function () {
       ackProc.onaudioprocess = function (ev) {
         var c = new Float32Array(ev.inputBuffer.getChannelData(0));
         for (var i = 0; i < ackDec.length; i++) ackDec[i].push(c);
+        ackMeter(c);
       };
       ackStat = function () {
         return { sync: d.stat.sync, crc: d.stat.crc, pk: d.stat.pk, maxHits: maxHits, hits: d.lastHits };
@@ -915,18 +1003,23 @@ var App = (function () {
 
   function ackListen(ms, done) {
     ackGot = null;
+    ackMeterReset();
     ackOpen().then(function () {
       setTimeout(function () {
         var st = ackStat ? ackStat() : null;
+        var peakDb = ackLastDb, peakF = ackLastF;
+        ackMeterOff();
         if (!ackGot && st) {
-          log('回执监听结果：一个都没解出｜同步失败 ' + st.sync + ' 次、CRC 失败 ' + st.crc +
-            ' 次、最好同步命中 ' + st.maxHits + '/8、解出 ' + st.pk + ' 个' +
-            (st.maxHits >= 5 ? '（听到影子但解不开：多半是频率偏移，让对端也做一次自动校正）'
-              : '（几乎什么都没听到：对端没回执、或音量太小/距离太远/回执麦被占）'), '#b4791f');
+          log('回执监听结果：一个都没解出｜最强 18.1k 信号 ' + (peakDb > 0 ? '+' + peakDb.toFixed(0) : peakDb.toFixed(0)) +
+            ' dB@' + (peakF || '—') + '｜同步失败 ' + st.sync + '、CRC 失败 ' + st.crc +
+            '、最好同步命中 ' + st.maxHits + '/8、解出 ' + st.pk +
+            (peakDb > 6 ? '（听得到回执音但解不开：频率偏移/回声，让对端也做一次自动校正）'
+              : '（18.1k 基本没能量：手机压根没发回执，或手机回执音量被压到静默、距离太远）'), '#b4791f');
         }
         done(ackGot);
       }, ms);
     }).catch(function (e) {
+      ackMeterOff();
       log('开麦失败（无法收回执）：' + (e && e.name ? e.name : e) +
         '。麦克风被别的应用/标签页占着，或系统没给权限 —— 关掉它们再试，或改成「不等（盲发）」', '#c0392b');
       done(null);
@@ -1381,9 +1474,19 @@ var App = (function () {
         makeDecoders(ctx.sampleRate);
         proc = ctx.createScriptProcessor(4096, 1, 1);
         var src = ctx.createMediaStreamSource(stream);
+        var saveMode = false, chunkN = 0;
         proc.onaudioprocess = function (ev) {
           var chunk = new Float32Array(ev.inputBuffer.getChannelData(0));
-          for (var i = 0; i < decoders.length; i++) if (!decoders[i].muted) decoders[i].push(chunk);
+          chunkN++;
+          /* 先花很小代价（三档各 8 个 Goertzel）测一下现在哪一档里有声音，
+           * 只把这一档的解码器喂进去。手机跑满 9 个解码器会掉样，实测只剩 60% 采样。 */
+          gateProbe(chunk);
+          for (var i = 0; i < decoders.length; i++) {
+            var d = decoders[i];
+            if (d.muted) continue;
+            if (!gateOn[d.band.key]) continue;
+            d.push(chunk);
+          }
           rxTotal += chunk.length;
           if (!rxT0) rxT0 = performance.now();
           var el2 = (performance.now() - rxT0) / 1000;
@@ -1391,13 +1494,19 @@ var App = (function () {
             var ratio = rxTotal / (ctx.sampleRate * el2);
             var el = document.getElementById('dDrop');
             if (el) el.textContent = (ratio * 100).toFixed(1) + '%';
-            if (ratio < 0.97 && !dropWarned) {
+            if (ratio < 0.9 && !saveMode && chunkN > 30) {
+              saveMode = true;
+              decoders.forEach(function (dd) { dd.muted = (dd.symMs !== symMs); });
+              log('收样只剩 ' + (ratio * 100).toFixed(0) + '%：已自动切省电模式（只跑 ' + symMs +
+                'ms 一档 × 三档频带，再靠能量门控压到一档）。要恢复三档速度请重新点开始监听', '#b4791f');
+            }
+            if (ratio < 0.75 && !dropWarned) {
               dropWarned = true;
-              log('麦克风在丢样（收样只有 ' + (ratio * 100).toFixed(0) + '%）：手机 CPU 跟不上，符号长度会被压缩，'
-                + '先停掉别的页面/应用，或把「解码速度」只留一档再试', '#c0392b');
+              log('麦克风在丢样（收样只有 ' + (ratio * 100).toFixed(0) + '%）：这已经不是软件能救回来的量，'
+                + '关掉后台应用/别的标签页，或换台手机再试', '#c0392b');
             }
           }
-          meterTick(chunk);
+          if (chunkN % 3 === 0) meterTick(chunk);     // 界面约 0.26 秒刷一次，别跟解码抢 CPU
         };
         src.connect(proc);
         proc.connect(ctx.destination);
@@ -1415,7 +1524,7 @@ var App = (function () {
         } catch (e) { if ($('dMic')) $('dMic').textContent = '未知'; }
         buildDbgRows();
         setState('监听中', true);
-        log('开始监听 · ' + ctx.sampleRate + ' Hz · ' + decoders.length + ' 个解码器');
+        log('开始监听 · ' + ctx.sampleRate + ' Hz · ' + decoders.length + ' 个解码器（按能量门控只跑有声音的那档）');
         if (ctx.sampleRate < 48000) log('注意：设备只给到 ' + ctx.sampleRate + ' Hz，20.5k 档接近奈奎斯特，可能解不出，建议用 18.1k 档', '#b4791f');
       }).catch(function (e) {
         log('麦克风打不开：' + (e && e.message ? e.message : e), '#c0392b');
