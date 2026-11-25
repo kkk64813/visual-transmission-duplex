@@ -53,9 +53,15 @@
     st.packets++;
     if (st.fallback) { st.fallback = false; log('双向恢复'); }
 
-    // 1) 收齐 → 停机
+    // 1) 收齐 → 先看是不是分片队列：有下一片就切，没有再停机
     if (status.done) {
       var w = targetWin();
+      var advanced = false;
+      try {
+        if (w && w.Main && typeof w.Main.nextPart === 'function') advanced = !!w.Main.nextPart();
+      } catch (e) { }
+      if (advanced) { log('手机已收齐这一片 → 自动切下一片'); ui(); return; }
+
       var paused = false;
       try { paused = !!(w && w.Main && w.Main.isPaused && w.Main.isPaused()); } catch (e) { }
       if (!paused && callMain('togglePause', true)) log('手机已收齐 → 停止播放');
@@ -111,13 +117,23 @@
       return false;
     }
 
-    st.decoder = new Duplex.StreamDecoder(st.ctx.sampleRate);
-    st.decoder.onPacket = function (payload) {
-      var s = Duplex.unpackStatus(payload);
-      if (!s) { st.badPackets++; return; }
-      apply(s);
-    };
-    st.decoder.onError = function (why) { st.badPackets++; };
+    /* 两档频带各跑一个解码器，同一路麦克风数据同时喂进去。
+       手机每次换一档轮流发，这样既不用人配置，也顺手把「哪档能过」测出来了。 */
+    var self = this;
+    st.decoders = [];
+    ['mid', 'hi'].forEach(function (key) {
+      var d = new Duplex.StreamDecoder(st.ctx.sampleRate, Duplex.bandByKey ? Duplex.bandByKey(key) : null);
+      d.bandKey = key;
+      d.onPacket = function (payload) {
+        var s = Duplex.unpackStatus(payload);
+        if (!s) { st.badPackets++; return; }
+        st.lastBand = key;
+        apply(s);
+      };
+      d.onError = function (why) { st.badPackets++; };
+      st.decoders.push(d);
+    });
+    st.decoder = st.decoders[0];   // 兼容旧引用
 
     st.src = st.ctx.createMediaStreamSource(st.stream);
     st.proc = st.ctx.createScriptProcessor(2048, 1, 1);
@@ -127,7 +143,8 @@
       for (var i = 0; i < d.length; i++) { var v = d[i]; sum += v * v; if (Math.abs(v) > pk) pk = Math.abs(v); }
       st.level = Math.sqrt(sum / d.length);
       if (pk > st.peak) st.peak = pk;
-      st.decoder.push(Float32Array.from(d));
+      var copy = Float32Array.from(d);
+      for (var k = 0; k < st.decoders.length; k++) st.decoders[k].push(copy);
     };
     st.mute = st.ctx.createGain();
     st.mute.gain.value = 0;
@@ -172,6 +189,11 @@
 
   root.DuplexRx = {
     start: start, stop: stop, applyModeFromPhone: applyModeFromPhone,
+    /* 把一段 PCM 同时喂给所有在跑的解码器（仿真/自测用，真实路径走 ScriptProcessor） */
+    feed: function (samples) {
+      if (!st.decoders) return;
+      for (var i = 0; i < st.decoders.length; i++) st.decoders[i].push(samples);
+    },
     state: st,
     modeName: function (m) { return MODE_NAME[m] || ('?' + m); }
   };

@@ -15,12 +15,24 @@
   'use strict';
 
   var SR = 48000;
-  var F0 = 20500;          // 首音
-  var DF = 214;            // 音距：20500..21998，7 段
+
+  /* 两档频带（实测：18 kHz 以上就听不见了，所以主力往下压）：
+   *  mid 18.1–19.5 kHz：人耳听阈之上，且手机扬声器、笔记本麦阵列在这段响应明显好于
+   *                     20 k 以上 —— 老版本「怎么都连不上」八成就是栽在 20.5k 太高。
+   *  hi  20.5–21.9 kHz：最安静，作为兜底保留。
+   * 发送端每次换一档轮流发，电脑端两档同时解 —— 不需要人去猜哪档能过。 */
+  var BANDS = {
+    hi: { key: 'hi', name: '20.5k', f0: 20500, df: 200, tones: 8 },
+    mid: { key: 'mid', name: '18.1k', f0: 18100, df: 200, tones: 8 }
+  };
+  var DEFAULT_BAND = BANDS.mid;
+
+  var F0 = DEFAULT_BAND.f0;   // 兼容旧接口
+  var DF = DEFAULT_BAND.df;
   var TONES = 8;
   var SYM_MS = 16;         // 187.5 bps
   var SYNC = [1, 5, 3, 7, 2, 6, 4, 0];   // 8 个互不相同的符号，避免连续同音
-  var GAIN = 0.55;         // 20k+ 衰减大，幅度给足
+  var GAIN = 0.7;          // 超声段衰减大，幅度给足
   var RAMP_MS = 2;         // 仅包首尾斜坡
 
   var TWO_PI = Math.PI * 2;
@@ -87,11 +99,14 @@
 
   function bitrate() { return Math.round(1000 / SYM_MS * 3); }   // 187
 
-  function toneFreq(sym) { return F0 + sym * DF; }
+  function toneAt(band, sym) { return band.f0 + sym * band.df; }
+  function toneFreq(sym, band) { return toneAt(band || DEFAULT_BAND, sym); }
+  function bandByKey(k) { return BANDS[k] || DEFAULT_BAND; }
 
   /* ---------------- 调制：相位连续 ---------------- */
-  function makeWaveform(packet, sr) {
+  function makeWaveform(packet, sr, band) {
     sr = sr || SR;
+    band = band || DEFAULT_BAND;
     var symLen = Math.round(sr * SYM_MS / 1000);
     var data = bytesToSymbols(packet);
     // 构造符号序列：[哨兵] SYNC 载荷 [哨兵]
@@ -107,7 +122,7 @@
     var phase = 0;
     var p = 0;
     for (var s = 0; s < syms.length; s++) {
-      var w = step * toneFreq(syms[s]);
+      var w = step * toneAt(band, syms[s]);
       for (var n = 0; n < symLen; n++) {
         x[p++] = Math.sin(phase) * GAIN;
         phase += w;
@@ -138,12 +153,13 @@
     return s1 * s1 + s2 * s2 - coeff * s1 * s2;
   }
 
-  function classify(x, off, len, sr) {
+  function classify(x, off, len, sr, band) {
     if (off < 0 || off + len > x.length) return -1;
+    band = band || DEFAULT_BAND;
     var mags = new Float64Array(TONES);
     var sum = 0, best = 0;
     for (var t = 0; t < TONES; t++) {
-      var m = goertzel(x, off, len, toneFreq(t), sr);
+      var m = goertzel(x, off, len, toneAt(band, t), sr);
       if (!(m >= 0)) m = 0;                  // NaN/负值一律当 0，别让它污染判决
       mags[t] = m;
       sum += m;
@@ -156,8 +172,9 @@
   }
 
   /* ---------------- 流式解码器 ---------------- */
-  function StreamDecoder(sampleRate) {
+  function StreamDecoder(sampleRate, band) {
     this.sr = sampleRate || SR;
+    this.band = band || DEFAULT_BAND;
     this.symLen = Math.round(this.sr * SYM_MS / 1000);
     this.cap = this.sr * 12;
     this.buf = new Float32Array(this.cap);
@@ -210,33 +227,52 @@
 
     for (var a = start; a <= limit; a += step) {
       var off = a - this.abs0;
-      if (classify(this.buf, off, symLen, this.sr) !== SYNC[0]) continue;
+      var band = this.band;
+      if (classify(this.buf, off, symLen, this.sr, band) !== SYNC[0]) continue;
       var ok = true;
       for (var i = 1; i < SYNC.length; i++) {
-        if (classify(this.buf, off + i * symLen, symLen, this.sr) !== SYNC[i]) { ok = false; break; }
+        if (classify(this.buf, off + i * symLen, symLen, this.sr, band) !== SYNC[i]) { ok = false; break; }
       }
       if (!ok) continue;
 
+      // 粗搜步长是 1/4 符号，窗口可能跨在两个符号之间：每个符号都能勉强判对、CRC 却会挂。
+      // 这里在 ±1/4 符号内找「同步头能量和」最大的子偏移，把定时对齐到采样级。
+      var refined = this._refine(off, symLen);
+      var a2 = this.abs0 + refined;
+
       // 读长度字段
       var lenSym = new Uint8Array(6);
-      var lb = symbolsToBytes(new Uint8Array([
-        classify(this.buf, off + (SYNC.length) * symLen, symLen, this.sr),
-        classify(this.buf, off + (SYNC.length + 1) * symLen, symLen, this.sr),
-        classify(this.buf, off + (SYNC.length + 2) * symLen, symLen, this.sr),
-        classify(this.buf, off + (SYNC.length + 3) * symLen, symLen, this.sr),
-        classify(this.buf, off + (SYNC.length + 4) * symLen, symLen, this.sr),
-        classify(this.buf, off + (SYNC.length + 5) * symLen, symLen, this.sr)
-      ]));
+      for (var k = 0; k < 6; k++) {
+        lenSym[k] = classify(this.buf, refined + (SYNC.length + k) * symLen, symLen, this.sr, band);
+      }
+      var lb = symbolsToBytes(lenSym);
       var needLen = lb[0] | (lb[1] << 8);
       if (needLen <= 0 || needLen > 64) continue;   // 状态包只有 5 字节，超过 64 一律当误判
 
-      this.syncAbs = a;
+      this.syncAbs = a2;
       this.totalSyms = SYNC.length + 3 * (2 + needLen + 1);
-      this.scanAbs = a;
+      this.scanAbs = a2;
       this._decodePacket();
       return;
     }
     this.scanAbs = Math.max(this.scanAbs, limit + 1);
+  };
+
+  StreamDecoder.prototype._refine = function (base, symLen) {
+    var q = Math.max(1, symLen >> 2);
+    var sub = Math.max(1, q >> 2);
+    var best = base, bestScore = -1;
+    for (var d = -q; d <= q; d += sub) {
+      var o = base + d;
+      if (o < 0 || o + (SYNC.length + 1) * symLen > this.fill) continue;
+      var score = 0;
+      for (var i = 0; i < SYNC.length; i++) {
+        var m = goertzel(this.buf, o + i * symLen, symLen, toneAt(this.band, SYNC[i]), this.sr);
+        if (m > 0) score += m;
+      }
+      if (score > bestScore) { bestScore = score; best = o; }
+    }
+    return best;
   };
 
   StreamDecoder.prototype._decodePacket = function () {
@@ -247,7 +283,7 @@
 
     var syms = new Uint8Array(this.totalSyms);
     for (var i = 0; i < this.totalSyms; i++) {
-      syms[i] = classify(this.buf, base + i * symLen, symLen, this.sr);
+      syms[i] = classify(this.buf, base + i * symLen, symLen, this.sr, this.band);
     }
 
     // 校验同步头：a 就是 SYNC[0] 的绝对位置，所以从 0 开始比
@@ -282,9 +318,9 @@
     this.busy = false;
   }
 
-  Tx.prototype.send = function (packet) {
+  Tx.prototype.send = function (packet, band) {
     var self = this;
-    var wave = makeWaveform(packet, self.ctx.sampleRate);
+    var wave = makeWaveform(packet, self.ctx.sampleRate, band);
     var buf = self.ctx.createBuffer(1, wave.length, self.ctx.sampleRate);
     buf.getChannelData(0).set(wave);
     var src = self.ctx.createBufferSource();
@@ -340,9 +376,10 @@
 
   var Duplex = {
     SR: SR, F0: F0, DF: DF, TONES: TONES, SYM_MS: SYM_MS, SYNC: SYNC,
+    BANDS: BANDS, DEFAULT_BAND: DEFAULT_BAND, bandByKey: bandByKey,
     F_DONE: F_DONE, F_DOWN: F_DOWN, F_UP: F_UP,
-    bitrate: bitrate, toneFreq: toneFreq, packetSymbols: packetSymbols,
-    packetDuration: packetDuration,
+    bitrate: bitrate, toneFreq: toneFreq, toneAt: toneAt,
+    packetSymbols: packetSymbols, packetDuration: packetDuration,
     crc8: crc8, buildPacket: buildPacket, parsePacket: parsePacket,
     bytesToSymbols: bytesToSymbols, symbolsToBytes: symbolsToBytes,
     makeWaveform: makeWaveform, goertzel: goertzel, classify: classify,

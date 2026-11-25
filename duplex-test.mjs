@@ -33,10 +33,12 @@ ok('CRC 落在末字节', pkt[pkt.length - 1] === Duplex.crc8(payload));
   ok('篡改一字节被 CRC 拒收', Duplex.parsePacket(bad) === null);
 }
 
-console.log('\n== 2. 频带（必须全部高于 20.5 kHz）==');
-ok('最低音 ≥ 20500 Hz', Duplex.toneFreq(0) === 20500, Duplex.toneFreq(0));
-ok('最高音 ≤ 22000 Hz', Duplex.toneFreq(7) <= 22000, Duplex.toneFreq(7));
-ok('最高音低于奈奎斯特 24000', Duplex.toneFreq(7) < SR / 2 - 1000);
+console.log('\n== 2. 频带（主力压到 18.1k：实测 18 kHz 以上听不见，且设备响应更好）==');
+ok('主力频带最低音 = 18100 Hz', Duplex.toneFreq(0) === 18100, Duplex.toneFreq(0));
+ok('主力频带最高音 = 19500 Hz', Duplex.toneFreq(7) === 19500, Duplex.toneFreq(7));
+ok('兜底频带 20.5k 仍可用', Duplex.toneFreq(0, Duplex.BANDS.hi) === 20500, Duplex.toneFreq(0, Duplex.BANDS.hi));
+ok('两档有声隔离（≥1000 Hz 间隔）', Duplex.BANDS.hi.f0 - (Duplex.BANDS.mid.f0 + Duplex.BANDS.mid.df * 7) >= 1000);
+ok('最高音低于奈奎斯特 24000', Duplex.toneFreq(7, Duplex.BANDS.hi) < SR / 2 - 1000);
 ok('单包 < 0.6 秒', Duplex.packetDuration(5, SR) < 0.6, Duplex.packetDuration(5, SR).toFixed(3));
 
 /* ---------- 离线闭环 ---------- */

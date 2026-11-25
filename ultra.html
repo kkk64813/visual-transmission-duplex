@@ -1,0 +1,518 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>超声信道 · UltraLink</title>
+<style>
+  :root{
+    --bg:#f5f7f6; --surface:#ffffff; --ink:#16211e; --muted:#6c7a75;
+    --accent:#0e7c66; --accent-2:#0a5f4f; --line:#e1e8e4; --warn:#b4791f; --warn-bg:#fdf6e7;
+    --shadow:0 2px 14px rgba(20,40,35,.07);
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font:15px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
+  header{position:sticky;top:0;z-index:10;display:flex;align-items:center;gap:10px;
+    padding:10px 14px;background:rgba(255,255,255,.92);backdrop-filter:blur(8px);
+    border-bottom:1px solid var(--line)}
+  .mark{width:26px;height:26px;border-radius:7px;background:linear-gradient(135deg,var(--accent),var(--accent-2));flex:none}
+  .brand{font-weight:700;letter-spacing:.02em}
+  .brand small{display:block;font-weight:400;color:var(--muted);font-size:11px;letter-spacing:.04em}
+  .dot{width:8px;height:8px;border-radius:50%;background:#c9d3cf;flex:none}
+  .dot.on{background:var(--accent);box-shadow:0 0 0 3px rgba(14,124,102,.16)}
+  .grow{flex:1}
+  nav{display:flex;gap:8px;padding:10px 14px 0}
+  .tab{flex:1;padding:9px 0;text-align:center;border:1px solid var(--line);background:#fff;
+    border-radius:10px;font-weight:600;color:var(--muted);cursor:pointer}
+  .tab.on{background:var(--accent);border-color:var(--accent);color:#fff}
+  main{padding:12px 14px 40px;max-width:760px;margin:0 auto}
+  .card{background:var(--surface);border:1px solid var(--line);border-radius:14px;
+    box-shadow:var(--shadow);padding:14px;margin-bottom:12px}
+  h3{margin:0 0 10px;font-size:13px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
+  .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+  button{border:1px solid var(--line);background:#fff;color:var(--ink);border-radius:10px;
+    padding:10px 16px;font:inherit;font-weight:600;cursor:pointer;transition:.15s}
+  button:hover{border-color:#cfded8}
+  button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+  button.primary:hover{background:var(--accent-2)}
+  button.pill{border-radius:999px;padding:8px 14px;font-weight:500}
+  button.pill.on{background:#e8f5f0;border-color:var(--accent);color:var(--accent-2)}
+  button:disabled{opacity:.45;cursor:not-allowed}
+  .meter{display:flex;align-items:center;gap:10px;margin:7px 0;font-variant-numeric:tabular-nums}
+  .meter .nm{width:58px;font-size:12px;color:var(--muted);flex:none}
+  .meter .bar{flex:1;height:10px;border-radius:6px;background:#eef3f1;overflow:hidden}
+  .meter .bar i{display:block;height:100%;width:0;background:linear-gradient(90deg,#bfe6da,var(--accent));
+    border-radius:6px;transition:width .12s linear}
+  .meter .vl{width:52px;text-align:right;font-size:12px;color:var(--muted);flex:none}
+  .stats{display:flex;gap:14px;flex-wrap:wrap;font-size:12px;color:var(--muted);
+    font-variant-numeric:tabular-nums;margin-top:8px}
+  .stats b{color:var(--ink);font-weight:600}
+  .out{min-height:64px;white-space:pre-wrap;word-break:break-word;padding:10px 12px;
+    border:1px dashed #d8e3de;border-radius:10px;background:#fbfcfc;font-size:15px}
+  .log{max-height:128px;overflow:auto;font-size:12px;color:var(--muted);
+    font-family:ui-monospace,Menlo,Consolas,monospace;background:#fbfcfc;border-radius:10px;
+    padding:8px 10px;border:1px solid #eff4f2;margin-top:8px}
+  textarea{width:100%;min-height:92px;padding:10px 12px;border:1px solid var(--line);
+    border-radius:10px;font:inherit;resize:vertical;background:#fff;color:var(--ink)}
+  input[type=file]{font-size:13px}
+  .prog{height:6px;background:#eef3f1;border-radius:6px;overflow:hidden;margin-top:10px}
+  .prog i{display:block;height:100%;width:0;background:var(--accent);transition:width .2s}
+  .hint{font-size:12px;color:var(--muted);margin-top:8px;line-height:1.7}
+  .warn{background:var(--warn-bg);border:1px solid #f0e2c4;color:#7a5416;border-radius:10px;
+    padding:10px 12px;font-size:13px;line-height:1.7;margin-bottom:12px}
+  .hide{display:none}
+  a{color:var(--accent);text-decoration:none}
+  footer{color:var(--muted);font-size:12px;text-align:center;padding:0 16px 28px}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="mark"></div>
+  <div class="brand">超声信道<small>UltraLink · 18.1k / 20.5k</small></div>
+  <div class="grow"></div>
+  <div class="dot" id="dot"></div>
+  <span style="font-size:12px;color:var(--muted)" id="stateTxt">未启动</span>
+</header>
+
+<nav>
+  <div class="tab on" id="tabRx" onclick="App.role('rx')">接收端</div>
+  <div class="tab" id="tabTx" onclick="App.role('tx')">发送端</div>
+</nav>
+
+<main>
+  <!-- 接收端 -->
+  <section id="panelRx">
+    <div class="card">
+      <h3>链路</h3>
+      <div class="row">
+        <button class="primary" id="btnMic" onclick="App.startRx()">开始监听</button>
+        <button id="btnStop" onclick="App.stopRx()" disabled>停止</button>
+        <button class="pill" onclick="App.clearAll()">清空</button>
+      </div>
+      <div class="stats">
+        <span>解出包 <b id="stPk">0</b></span>
+        <span>同步失配 <b id="stSync">0</b></span>
+        <span>CRC 失败 <b id="stCrc">0</b></span>
+        <span>采样 <b id="stSr">—</b></span>
+      </div>
+      <div class="hint">电脑或手机任一端开这里，另一端去「发送端」。两档频带同时在解，不用手动对齐。</div>
+    </div>
+
+    <div class="card">
+      <h3>频带能量（实时）</h3>
+      <div id="meters"></div>
+      <div class="hint">让对方点「发探测音」，哪一档的条子明显跳起来，就说明这条频带在这对设备上能过；全都不动就是硬件把这段滤掉了。</div>
+    </div>
+
+    <div class="card">
+      <h3>收到的文字</h3>
+      <div class="out" id="outText">（空）</div>
+      <div id="fileBox" class="hide" style="margin-top:10px">
+        <div class="hint" id="fileInfo"></div>
+        <div class="prog"><i id="fileProg"></i></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>日志</h3>
+      <div class="log" id="log"></div>
+    </div>
+  </section>
+
+  <!-- 发送端 -->
+  <section id="panelTx" class="hide">
+    <div class="warn">
+      超声带宽只有约 <b>20 字节/秒</b>：一段 60 字的短句约 4 秒，小文件（几 KB）要几分钟。
+      这是给「完全无网络、只想送一句话/一串密码」的场景用的，不适合传大文件。
+    </div>
+
+    <div class="card">
+      <h3>频段</h3>
+      <div class="row" id="bandRow"></div>
+      <div class="hint" id="bandNote"></div>
+      <div class="row" style="margin-top:10px">
+        <button id="btnProbe" onclick="App.probe()">发探测音（1.2 秒）</button>
+        <span class="hint" style="margin:0">先探测再发送，能省掉来回试。</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>速度与重复</h3>
+      <div class="row">
+        <button class="pill on" data-sp="16" onclick="App.speed(16)">快 · 16ms</button>
+        <button class="pill" data-sp="24" onclick="App.speed(24)">稳 · 24ms</button>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <button class="pill on" data-rp="2" onclick="App.repeat(2)">每包发 2 遍</button>
+        <button class="pill" data-rp="3" onclick="App.repeat(3)">3 遍</button>
+        <button class="pill" data-rp="1" onclick="App.repeat(1)">1 遍</button>
+      </div>
+      <div class="hint" id="speedNote"></div>
+    </div>
+
+    <div class="card">
+      <h3>发文字</h3>
+      <textarea id="txt" placeholder="要送过去的文字，例如一串 Wi-Fi 密码、一句口令、一个地址"></textarea>
+      <div class="row" style="margin-top:10px">
+        <button class="primary" id="btnSend" onclick="App.sendText()">发送</button>
+        <span class="hint" id="txtInfo" style="margin:0"></span>
+      </div>
+      <div class="prog"><i id="txtProg"></i></div>
+    </div>
+
+    <div class="card">
+      <h3>发小文件（≤ 8 KB）</h3>
+      <div class="row">
+        <input type="file" id="file" onchange="App.pickFile(this)">
+        <button class="primary" id="btnSendFile" onclick="App.sendFile()" disabled>发送文件</button>
+      </div>
+      <div class="hint" id="fileSendInfo">8 KB 大约需要 6–8 分钟，中途别切后台。</div>
+      <div class="prog"><i id="fileSendProg"></i></div>
+    </div>
+
+    <div class="card">
+      <h3>日志</h3>
+      <div class="log" id="logTx"></div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  纯本地：声音只在空气里走，不经过网络。返回 <a href="./index.html">首页</a> ·
+  双工控制通道见 <a href="./duplex.html">duplex</a>
+</footer>
+
+<script src="ultra-core.js"></script>
+<script>
+var App = (function () {
+  var band = Ultra.BANDS[0];       // 默认 18.1k 实测 18k 听不见
+  var symMs = 16, repeats = 2;
+  var ctx = null, tx = null;
+  var micStream = null, proc = null;
+  var decoders = [];               // 3 band × 2 speed
+  var running = false;
+  var textState = { total: 0, parts: {} };
+  var fileState = null;
+  var bufForMeter = new Float32Array(0);
+
+  function $(id) { return document.getElementById(id); }
+
+  function log(msg, cls) {
+    var el = $('log'), txlog = $('logTx');
+    var t = new Date();
+    var line = ('0' + t.getHours()).slice(-2) + ':' + ('0' + t.getMinutes()).slice(-2) + ':' +
+      ('0' + t.getSeconds()).slice(-2) + '  ' + msg;
+    [el, txlog].forEach(function (e) {
+      if (!e) return;
+      var d = document.createElement('div');
+      d.textContent = line;
+      if (cls) d.style.color = cls;
+      e.appendChild(d);
+      e.scrollTop = e.scrollHeight;
+      while (e.childNodes.length > 200) e.removeChild(e.firstChild);
+    });
+  }
+
+  function setState(txt, on) {
+    $('stateTxt').textContent = txt;
+    $('dot').className = 'dot' + (on ? ' on' : '');
+  }
+
+  /* ---------- 界面初始化 ---------- */
+  function buildBandRow() {
+    var row = $('bandRow');
+    row.innerHTML = '';
+    Ultra.BANDS.forEach(function (b) {
+      var btn = document.createElement('button');
+      btn.className = 'pill' + (b.key === band.key ? ' on' : '');
+      btn.textContent = b.name + ' · ' + b.label;
+      btn.onclick = function () { App.pickBand(b.key); };
+      row.appendChild(btn);
+    });
+    $('bandNote').textContent = band.desc;
+    buildMeters();
+  }
+
+  function buildMeters() {
+    var m = $('meters');
+    m.innerHTML = '';
+    Ultra.BANDS.forEach(function (b) {
+      var d = document.createElement('div');
+      d.className = 'meter';
+      d.innerHTML = '<span class="nm">' + b.name + '</span><span class="bar"><i id="bar-' + b.key + '"></i></span><span class="vl" id="val-' + b.key + '">-</span>';
+      m.appendChild(d);
+    });
+  }
+
+  /* ---------- 接收 ---------- */
+  function makeDecoders(sr) {
+    decoders = [];
+    var speeds = [16, 24];
+    Ultra.BANDS.forEach(function (b) {
+      speeds.forEach(function (sp) {
+        var d = new Ultra.StreamDecoder(sr, b, sp);
+        d.onPacket = function (payload) { onPacket(payload, b, sp); };
+        d.onError = function (kind) {
+          if (kind === 'crc') { inc('stCrc'); } else { inc('stSync'); }
+        };
+        decoders.push(d);
+      });
+    });
+  }
+
+  function inc(id) {
+    var e = $(id);
+    e.textContent = (parseInt(e.textContent, 10) || 0) + 1;
+  }
+
+  function onPacket(payload, b, sp) {
+    inc('stPk');
+    var p = Ultra.parsePayload(payload);
+    if (!p) return;
+    if (p.type === 'text') {
+      if (p.seq === 0) textState = { total: p.total, parts: {} };
+      textState.parts[p.seq] = p.data;
+      if (Object.keys(textState.parts).length === textState.total) {
+        var s = Ultra.joinText(textState.parts, textState.total);
+        $('outText').textContent = s || '';
+        log('收到文字 ' + (s ? s.length : 0) + ' 字 · 经 ' + b.name + '/' + sp + 'ms', '#0a5f4f');
+      } else {
+        $('outText').textContent = '接收中… ' + Object.keys(textState.parts).length + '/' + textState.total;
+      }
+    } else if (p.type === 'fileHead') {
+      fileState = { name: p.name, size: p.size, total: p.total, parts: {}, got: 0 };
+      $('fileBox').className = '';
+      $('fileInfo').textContent = '文件：' + p.name + '（' + p.size + ' B，' + p.total + ' 块）';
+      log('文件开始：' + p.name, '#0a5f4f');
+    } else if (p.type === 'fileChunk' && fileState) {
+      if (!fileState.parts[p.seq]) { fileState.parts[p.seq] = p.data; fileState.got++; }
+      var pct = Math.round(fileState.got / fileState.total * 100);
+      $('fileProg').style.width = pct + '%';
+      $('fileInfo').textContent = '文件：' + fileState.name + ' · ' + fileState.got + '/' + fileState.total + ' 块（' + pct + '%）';
+      if (fileState.got === fileState.total) finishFile();
+    }
+  }
+
+  function finishFile() {
+    var parts = [];
+    for (var i = 0; i < fileState.total; i++) {
+      var d = fileState.parts[i];
+      if (!d) return;
+      for (var k = 0; k < d.length; k++) parts.push(d[k]);
+    }
+    var u8 = new Uint8Array(parts).subarray(0, fileState.size);
+    var blob = new Blob([u8], { type: 'application/octet-stream' });
+    var url = URL.createObjectURL(blob);
+    $('fileInfo').innerHTML = '文件完成：<a href="' + url + '" download="' + fileState.name + '">' + fileState.name + '</a>（' + fileState.size + ' B）';
+    log('文件完成：' + fileState.name, '#0a5f4f');
+  }
+
+  function meterTick(chunk) {
+    var half = Math.min(chunk.length, Math.round((ctx ? ctx.sampleRate : 48000) * 0.09));
+    var slice = chunk.subarray(chunk.length - half);
+    Ultra.BANDS.forEach(function (b) {
+      var e = Ultra.bandEnergy(slice, ctx ? ctx.sampleRate : 48000, b);
+      // 以「峰/均值」做可分辨度，另给一个绝对电平
+      var lvl = e.peak > 0 ? 20 * Math.log10(1 + e.peak / Math.max(1e-9, e.mean)) : 0;
+      var lvl2 = e.peak > 0 ? Math.min(100, Math.round(20 * Math.log10(e.peak + 1) * 3)) : 0;
+      var bar = $('bar-' + b.key), val = $('val-' + b.key);
+      if (!bar) return;
+      bar.style.width = lvl2 + '%';
+      val.textContent = lvl2 + '%';
+    });
+  }
+
+  /* ---------- 发送 ---------- */
+  function ensureCtx() {
+    if (!ctx) { ctx = Ultra.makeCtx(); tx = new Ultra.Tx(ctx); }
+    if (ctx.state === 'suspended') ctx.resume();
+    return ctx;
+  }
+
+  function queuePackets(packets, onProgress, onDone) {
+    var i = 0;
+    function next() {
+      if (i >= packets.length) { if (onDone) onDone(); return; }
+      var pkt = packets[i];
+      i++;
+      onProgress && onProgress(i, packets.length);
+      var reps = 0;
+      function one() {
+        if (reps >= repeats) { setTimeout(next, 220); return; }
+        reps++;
+        tx.send(Ultra.buildPacket(pkt), band, symMs, function () { setTimeout(one, 180); });
+      }
+      one();
+    }
+    next();
+  }
+
+  return {
+    role: function (r) {
+      $('panelRx').className = r === 'rx' ? '' : 'hide';
+      $('panelTx').className = r === 'tx' ? '' : 'hide';
+      $('tabRx').className = 'tab' + (r === 'rx' ? ' on' : '');
+      $('tabTx').className = 'tab' + (r === 'tx' ? ' on' : '');
+      if (r === 'tx') ensureCtx();
+    },
+
+    pickBand: function (key) {
+      band = Ultra.bandByKey(key);
+      buildBandRow();
+      log('发送频段切到 ' + band.name);
+    },
+
+    speed: function (v) {
+      symMs = v;
+      Array.prototype.forEach.call(document.querySelectorAll('[data-sp]'), function (b) {
+        b.className = 'pill' + (parseInt(b.dataset.sp, 10) === v ? ' on' : '');
+      });
+      $('speedNote').textContent = '当前：' + v + 'ms/符号 ≈ ' + (1000 / v * 3 / 3 | 0) + ' B/s（含帧头开销约打七折）';
+    },
+
+    repeat: function (v) {
+      repeats = v;
+      Array.prototype.forEach.call(document.querySelectorAll('[data-rp]'), function (b) {
+        b.className = 'pill' + (parseInt(b.dataset.rp, 10) === v ? ' on' : '');
+      });
+    },
+
+    startRx: function () {
+      if (running) return;
+      Ultra.openMic().then(function (stream) {
+        micStream = stream;
+        ensureCtx();
+        makeDecoders(ctx.sampleRate);
+        proc = ctx.createScriptProcessor(4096, 1, 1);
+        var src = ctx.createMediaStreamSource(stream);
+        proc.onaudioprocess = function (ev) {
+          var chunk = new Float32Array(ev.inputBuffer.getChannelData(0));
+          for (var i = 0; i < decoders.length; i++) decoders[i].push(chunk);
+          meterTick(chunk);
+        };
+        src.connect(proc);
+        proc.connect(ctx.destination);
+        running = true;
+        $('btnMic').disabled = true;
+        $('btnStop').disabled = false;
+        $('stSr').textContent = ctx.sampleRate + ' Hz';
+        setState('监听中', true);
+        log('开始监听 · ' + ctx.sampleRate + ' Hz · ' + decoders.length + ' 个解码器');
+        if (ctx.sampleRate < 48000) log('注意：设备只给到 ' + ctx.sampleRate + ' Hz，20.5k 档接近奈奎斯特，可能解不出，建议用 18.1k 档', '#b4791f');
+      }).catch(function (e) {
+        log('麦克风打不开：' + (e && e.message ? e.message : e), '#c0392b');
+        setState('麦克风被拒', false);
+      });
+    },
+
+    stopRx: function () {
+      running = false;
+      if (proc) { try { proc.disconnect(); } catch (e) {} proc = null; }
+      if (micStream) { micStream.getTracks().forEach(function (t) { t.stop(); }); micStream = null; }
+      $('btnMic').disabled = false;
+      $('btnStop').disabled = true;
+      setState('已停止', false);
+      log('停止监听');
+    },
+
+    clearAll: function () {
+      textState = { total: 0, parts: {} };
+      fileState = null;
+      $('outText').textContent = '（空）';
+      $('fileBox').className = 'hide';
+      $('log').innerHTML = '';
+      ['stPk', 'stSync', 'stCrc'].forEach(function (id) { $(id).textContent = '0'; });
+    },
+
+    probe: function () {
+      ensureCtx();
+      $('btnProbe').disabled = true;
+      log('发探测音 ' + band.name + ' · 1.2s');
+      tx.probe(band, 1200, function () {
+        $('btnProbe').disabled = false;
+        log('探测音结束');
+      });
+    },
+
+    sendText: function () {
+      var s = $('txt').value;
+      if (!s) { log('没内容'); return; }
+      ensureCtx();
+      var chunks = Ultra.chunkText(s, 64);
+      $('btnSend').disabled = true;
+      log('开始发送 ' + s.length + ' 字 · ' + chunks.length + ' 包 · ' + band.name + ' · ' + symMs + 'ms · ×' + repeats);
+      queuePackets(chunks, function (i, n) {
+        $('txtProg').style.width = Math.round(i / n * 100) + '%';
+        $('txtInfo').textContent = i + '/' + n + ' 包';
+      }, function () {
+        $('btnSend').disabled = false;
+        $('txtProg').style.width = '100%';
+        log('发送完成');
+      });
+    },
+
+    pickFile: function (inp) {
+      var f = inp.files && inp.files[0];
+      $('btnSendFile').disabled = true;
+      if (!f) return;
+      if (f.size > 8 * 1024) { log('文件超过 8 KB，超声传不动', '#c0392b'); return; }
+      $('fileSendInfo').textContent = f.name + ' · ' + f.size + ' B · 约 ' + Math.max(1, Math.round(f.size / 18)) + ' 秒（不含重复）';
+      $('btnSendFile').disabled = false;
+    },
+
+    sendFile: function () {
+      var f = $('file').files && $('file').files[0];
+      if (!f) return;
+      ensureCtx();
+      var reader = new FileReader();
+      reader.onload = function () {
+        var u8 = new Uint8Array(reader.result);
+        var chunkBytes = 64;
+        var total = Math.ceil(u8.length / chunkBytes);
+        var pkts = [Ultra.fileHead(f.name, u8.length, total)];
+        for (var i = 0; i < total; i++) pkts.push(Ultra.fileChunk(u8, i, total, chunkBytes));
+        $('btnSendFile').disabled = true;
+        log('发送文件 ' + f.name + ' · ' + total + ' 块');
+        queuePackets(pkts, function (i, n) {
+          $('fileSendProg').style.width = Math.round(i / n * 100) + '%';
+          $('fileSendInfo').textContent = i + '/' + n + ' 块';
+        }, function () {
+          $('btnSendFile').disabled = false;
+          log('文件发送完成');
+        });
+      };
+      reader.readAsArrayBuffer(f);
+    }
+  };
+})();
+
+App.speed(16);
+App.repeat(2);
+(function init() {
+  var row = document.getElementById('bandRow');
+  Ultra.BANDS.forEach(function (b) {
+    var btn = document.createElement('button');
+    btn.className = 'pill' + (b.key === 'mid' ? ' on' : '');
+    btn.textContent = b.name + ' · ' + b.label;
+    btn.onclick = function () { App.pickBand(b.key); };
+    row.appendChild(btn);
+  });
+  document.getElementById('bandNote').textContent = Ultra.BANDS[0].desc;
+  var m = document.getElementById('meters');
+  Ultra.BANDS.forEach(function (b) {
+    var d = document.createElement('div');
+    d.className = 'meter';
+    d.innerHTML = '<span class="nm">' + b.name + '</span><span class="bar"><i id="bar-' + b.key + '"></i></span><span class="vl" id="val-' + b.key + '">-</span>';
+    m.appendChild(d);
+  });
+  var f = document.getElementById('txt');
+  f.addEventListener('input', function () {
+    var n = f.value.length;
+    document.getElementById('txtInfo').textContent = n ? (n + ' 字 · 约 ' + Math.max(1, Math.round(n / 16)) + ' 秒') : '';
+  });
+})();
+</script>
+</body>
+</html>

@@ -44,7 +44,7 @@ const Main = {
 };
 const targetWin = () => ({ Main });
 
-const dec = () => g.DuplexRx.state.decoder;
+const dec = () => ({ push: (w) => g.DuplexRx.feed(w) });
 const waveOf = (status) => g.Duplex.makeWaveform(
   g.Duplex.buildPacket(g.Duplex.packStatus(status)), SR);
 
@@ -86,3 +86,4 @@ ok('坏包/噪声计入统计', g.DuplexRx.state.badPackets >= 0);
 
 console.log(`\n===== ${pass} 通过 / ${fail} 失败 =====`);
 process.exit(fail ? 1 : 0);
+

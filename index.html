@@ -112,6 +112,22 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
       </div>
     </a>
+    <a class="card" href="ultra.html">
+      <div class="kicker">Air · 只走声音</div>
+      <h2>超声信道 · 传文字</h2>
+      <p>不依赖屏幕和摄像头，只靠一段人耳听不见的声音送一句话、一串口令。带两档频带能量表和探测音，用来验证超声到底能不能过。</p>
+      <div class="go">打开 ultra.html
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+      </div>
+    </a>
+    <a class="card" href="merge.html">
+      <div class="kicker">Tool · 收尾</div>
+      <h2>分片合并</h2>
+      <p>大档案分片传输后，把手机收到的 part01、part02… 按序拼回原档。全部在本地完成。</p>
+      <div class="go">打开 merge.html
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+      </div>
+    </a>
   </div>
 
   <section>
@@ -128,7 +144,7 @@
     <table class="specs">
       <tr><th>下行 · 屏幕码</th><td>约 106 KB/s（850 kbps，15 fps 基准）</td></tr>
       <tr><th>上行 · 超声</th><td>188 bps，状态包 5 字节 / 0.54 秒</td></tr>
-      <tr><th>超声频带</th><td>20500 – 21998 Hz，8 音 MFSK，人耳听不见</td></tr>
+      <tr><th>超声频带</th><td>18100 – 19500 Hz 主力 / 20500 – 21900 Hz 兜底，8 音 MFSK，双档同时解</td></tr>
       <tr><th>纠错</th><td>帧内 Reed-Solomon + 跨帧喷泉码，整帧丢失可自愈</td></tr>
       <tr><th>网络依赖</th><td>无。断网、飞行模式、开热点都能传</td></tr>
     </table>
@@ -137,7 +153,7 @@
   <div class="note">
     <b>两个前提。</b>
     一是必须用 HTTPS（或 localhost）打开，否则浏览器不给摄像头和麦克风权限；
-    二是手机扬声器在 20 kHz 以上普遍衰减 15–25 dB，个别机型发不出来 —— 那种情况超声通道建不起来，
+    二是超声频带已压到 18.1–19.5 kHz（实测 18 kHz 以上就听不见了，这一段设备响应也最好）；若个别机型仍发不出来，
     页面会自己退回纯单向，传输照样完成，只是没有自适应。
   </div>
 

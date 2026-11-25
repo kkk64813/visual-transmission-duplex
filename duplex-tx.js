@@ -21,8 +21,20 @@
     winStart: 0, attempts: 0, ok: 0, fail: 0,
     mode: 0, need: 0, done: false,
     packets: 0, lastSent: 0, consecutiveFail: 0,
-    hooks: false, started: false
+    hooks: false, started: false,
+    bandIdx: 0, bandUsed: 'mid'
   };
+
+  /* 两档频带轮流发：20.5k 最安静但很多设备不响应，19.0k 更稳。
+     电脑端两档同时在解，所以不需要人去猜，谁通就用谁。 */
+  var BAND_ORDER = ['mid', 'hi'];
+
+  function nextBand() {
+    var k = BAND_ORDER[st.bandIdx % BAND_ORDER.length];
+    st.bandIdx++;
+    st.bandUsed = k;
+    return Duplex.bandByKey ? Duplex.bandByKey(k) : null;
+  }
 
   function log(msg) {
     if (root.DuplexLog) try { root.DuplexLog(msg); } catch (e) { }
@@ -148,7 +160,7 @@
     if (!st.tx) st.tx = new Duplex.Tx(st.ctx);
     if (st.tx.busy) { schedule(BASE_GAP); return; }   // 上一包还在播，别叠加成噪声
 
-    st.tx.send(Duplex.buildPacket(payload));
+    st.tx.send(Duplex.buildPacket(payload), nextBand());
     st.packets++;
     st.lastSent = performance.now();
 

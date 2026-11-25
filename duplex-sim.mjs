@@ -78,10 +78,15 @@ g.Zstd.decompress = function () { zstdCalls.push(1); return origZstd.apply(this,
 
 vm.runInContext(readFileSync('duplex-tx.js', 'utf8'), g, { filename: 'duplex-tx.js' });
 
-/* ---------- 真解码器，接住 Tx 播出的每一包 ---------- */
-const dec = new g.Duplex.StreamDecoder(SR);
+/* ---------- 真解码器，接住 Tx 播出的每一包 ----------
+   发送端现在两档频带轮流发（19.0k / 20.5k），所以这里也起两个解码器，模拟电脑端的双频接收。 */
 const got = [];
-dec.onPacket = (p) => got.push(g.Duplex.unpackStatus(p));
+const decs = [g.Duplex.bandByKey('mid'), g.Duplex.bandByKey('hi')].map(b => {
+  const d = new g.Duplex.StreamDecoder(SR, b);
+  d.onPacket = (p) => got.push(g.Duplex.unpackStatus(p));
+  return d;
+});
+const feed = (wave) => decs.forEach(d => d.push(wave));
 
 /* ---------- 造解码事件 ---------- */
 let failRate = 0.7, emitTimer = null;
@@ -104,7 +109,7 @@ startEmitting();
 await sleep(3600);
 while (g.DuplexTx.state.tx.busy) await sleep(50);
 for (const w of new FakeCtx().captured) { }   // 占位，避免 lint
-for (const wave of g.DuplexTx.state.ctx.captured.splice(0)) dec.push(wave);
+for (const wave of g.DuplexTx.state.ctx.captured.splice(0)) feed(wave);
 await sleep(0);
 ok('第一阶段收到至少一个状态包', got.length >= 1, 'got=' + got.length);
 ok('上报了"读不动，请放慢"', got.some(s => s && s.down === true),
@@ -115,7 +120,7 @@ failRate = 0.03;
 const mark = got.length;
 await sleep(4200);
 while (g.DuplexTx.state.tx.busy) await sleep(50);
-for (const wave of g.DuplexTx.state.ctx.captured.splice(0)) dec.push(wave);
+for (const wave of g.DuplexTx.state.ctx.captured.splice(0)) feed(wave);
 await sleep(0);
 ok('上报了"读得动，可提速"', got.slice(mark).some(s => s && s.up === true),
   JSON.stringify(got.slice(mark).map(s => s && { u: s.up, f: s.fps })));
@@ -126,7 +131,7 @@ reportRef.v = { need: 42 };
 g.Sink.on_decode(new Uint8Array(3));
 await sleep(3000);
 while (g.DuplexTx.state.tx.busy) await sleep(50);
-for (const wave of g.DuplexTx.state.ctx.captured.splice(0)) dec.push(wave);
+for (const wave of g.DuplexTx.state.ctx.captured.splice(0)) feed(wave);
 await sleep(0);
 ok('need 出现在后续包', got.some(s => s && s.need === 42),
   JSON.stringify(got.slice(-3).map(s => s && s.need)));
@@ -137,7 +142,7 @@ g.Zstd.decompress('x');
 const beforeDone = got.length;
 await sleep(3200);
 while (g.DuplexTx.state.tx.busy) await sleep(50);
-for (const wave of g.DuplexTx.state.ctx.captured.splice(0)) dec.push(wave);
+for (const wave of g.DuplexTx.state.ctx.captured.splice(0)) feed(wave);
 await sleep(0);
 ok('最后两包带"收齐"标志', got.slice(beforeDone).filter(s => s && s.done === true).length >= 1,
   JSON.stringify(got.slice(beforeDone).map(s => s && s.done)));
@@ -146,3 +151,4 @@ ok('停机后不再发', g.DuplexTx.state.ctx.captured.length === 0);
 
 console.log(`\n===== ${pass} 通过 / ${fail} 失败 =====`);
 process.exit(fail ? 1 : 0);
+
