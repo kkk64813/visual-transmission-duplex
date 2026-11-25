@@ -25,6 +25,7 @@
 var FORCED_SCALE = 0;      // 手动校准（0 = 自动）
 var GAIN = 0.72;          // 默认标准音量：够响，又不至于让喇叭非线性生出人耳可闻的差频
   var RAMP_MS = 3;
+  var GLIDE_MS = 1.5;          // 相邻符号之间的等幅频率滑音长度：消掉跳频折角溅出的可听宽带能量
   var TWO_PI = Math.PI * 2;
 
   /* 两档频带（音距 200 Hz，8 音共 1400 Hz 宽；两档中间留 1000 Hz 隔离，避免互串）：
@@ -126,13 +127,23 @@ var GAIN = 0.72;          // 默认标准音量：够响，又不至于让喇叭
     var x = new Float32Array(total);
     var step = TWO_PI / sr;
     var phase = 0, p = 0;
+    // 符号之间用 2ms 的频率滑音过渡（等幅、相位连续），而不是突然跳频：
+    // 突然跳频在波形上留下一个折角，会在人耳频段里溅出宽带能量，听着就是「嗒嗒」声。
+    var glide = Math.max(1, Math.round(sr * GLIDE_MS / 1000));
+    var prevW = step * toneFreq(band, syms[0]);
     for (var s = 0; s < syms.length; s++) {
-      var w = step * toneFreq(band, syms[s]);
+      var tw = step * toneFreq(band, syms[s]);
+      // 同步头保持硬跳频（解码要靠它估频率偏移，不能被滑音糊掉），
+      // 载荷符号才用滑音 —— 载荷符号占绝大多数，可听的「嗒嗒」声主要来自它们。
+      var gl = (s >= SYNC.length + 1) ? glide : 0;
       for (var n = 0; n < symLen; n++) {
+        var w = tw;
+        if (gl && n < gl) { var t = n / gl; w = prevW + (tw - prevW) * t; }
         x[p++] = Math.sin(phase) * GAIN;
         phase += w;
         if (phase > TWO_PI) phase -= TWO_PI;
       }
+      prevW = tw;
     }
     var ramp = Math.max(1, Math.round(sr * RAMP_MS / 1000));
     for (var k = 0; k < ramp && k < total; k++) {

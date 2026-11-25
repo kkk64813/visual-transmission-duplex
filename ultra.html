@@ -169,11 +169,19 @@
       </div>
       <div class="hint">「先发校准」= 连发 3 个最短的包，让对方先锁上、把频率补偿估准（显示成「自动 ×1.0…」），之后正式内容才不容易整包报废。</div>
       <div class="row" style="margin-top:8px">
+        <button class="pill" data-gn="0.35" onclick="App.gain(0.35)">音量 · 静默</button>
         <button class="pill" data-gn="0.5" onclick="App.gain(0.5)">音量 · 轻</button>
         <button class="pill on" data-gn="0.72" onclick="App.gain(0.72)">音量 · 标准</button>
         <button class="pill" data-gn="0.9" onclick="App.gain(0.9)">音量 · 响</button>
       </div>
-      <div class="hint">超声放得越响，越容易被喇叭的非线性“翻译”成人耳听得见的嗡嗡声。真听到了就调轻一档，接收端的边距通常还够。</div>
+      <div class="row" style="margin-top:8px">
+        <button onclick="App.quietPreset()">一键「静音优先」</button>
+        <span class="hint" style="margin:0">静默音量 + 32ms 慢速：最不容易被人耳听到的一组</span>
+      </div>
+      <div class="hint">
+        人耳听到的那点声音，几乎都是喇叭自己把超声“检波”出来的，跟频段高低关系不大：<b>幅度降一半，失真降到四分之一</b>。
+        所以想去掉声音，先降音量，再降速度（符号越长，同样的距离越不费劲），不要先换频段。
+      </div>
       <div class="dbg" style="margin-top:10px">
         <div>本机采样率 <b id="sSr">—</b> · 实际发出 <b id="sOut">—</b> <span class="hint" style="margin:0">（喇叭真的在放几千赫，这里显示的不是设定值）</span></div>
       </div>
@@ -506,6 +514,15 @@ var App = (function () {
         b.className = 'pill' + (parseFloat(b.dataset.gn) === v ? ' on' : '');
       });
       log('发送音量 ' + g.toFixed(2));
+    },
+
+    /* 想让人耳听不到，唯一有效的旋钮是「幅度」：失真随幅度按平方/立方掉。
+     * 代价是能量少了，用更长的符号补回来。 */
+    quietPreset: function () {
+      this.gain(0.35);
+      this.speed(32);
+      this.repeat(3);
+      log('静音优先：音量 0.35 + 32ms + 每包 3 遍（慢，但最不吵）');
     },
 
     calib: function (permille) {
