@@ -138,6 +138,7 @@
         <button class="pill" onclick="App.loopAck(false)">停</button>
         <span class="hint" id="ackLoopCnt" style="margin:0">没在循环</span>
       </div>
+      <div class="hint" id="ackSent">回执：本机还没发过（发过会在这里显示次数与档位）</div>
       <div class="out" id="outText">（空）</div>
       <div id="fileBox" class="hide" style="margin-top:10px">
         <div class="hint" id="fileInfo"></div>
@@ -312,11 +313,11 @@
 
 
 <footer>
-  纯本地：声音只在空气里走，不经过网络。 版本 v2026-11-25o（能量门控救手机掉样 · 回执信号强度表 · 回执抬音量 · 收齐回执）返回 <a href="./index.html">首页</a> ·
+  纯本地：声音只在空气里走，不经过网络。 版本 v2026-11-25q（门控修正 · 回执 32ms/8s · 回执 dBFS + 本机已发次数 · 收齐回执）返回 <a href="./index.html">首页</a> ·
   双工控制通道见 <a href="./duplex.html">duplex</a>
 </footer>
 
-<script src="ultra-core.js?v=20261125o"></script>
+<script src="ultra-core.js?v=20261125q"></script>
 <script>
 var App = (function () {
   var band = Ultra.BANDS[0];       // 默认 18.1k 实测 18k 听不见
@@ -325,7 +326,7 @@ var App = (function () {
   /* 回执用固定的一组参数：18.1k + 24ms + 连发 2 遍。
    * 为什么不用「跟数据同一档」：电脑麦克风实测最高只到约 21.2k，22.3k 那一档在电脑端根本进不来；
    * 18.1k 是两端都验过能收的那一档，回执这种「一句话定生死」的东西必须走最稳的链路。 */
-  var ACK_BAND = 'mid', ACK_SP = 24, ACK_COPIES = 2, ACK_EVERY_MS = 2400;
+  var ACK_BAND = 'mid', ACK_SP = 32, ACK_COPIES = 2, ACK_EVERY_MS = 3200;
   /* 对端设备：电脑麦克风上限约 21.2k，22.3k 那档在电脑上等于聋。开着「电脑收」时，发端
    * 自动把 22.3k 从可用档里摘掉（自动轮流只轮 18.1k/20.5k），否则那一轮永远补不回来。 */
   var peerIsPC = false, ackDoneSent = 0;
@@ -410,41 +411,62 @@ var App = (function () {
     });
   }
 
-  /* ---------- 频带能量门控 ----------
-   * 手机同时跑 9 个解码器（3 档 × 3 种符号长度）会来不及处理，麦克风回调直接掉样
-   * （实测只收到 60% 采样 → 时间轴被压缩 → 全场解不出来）。这里每块音频先算三档的
-   * 峰值能量（很便宜），只有明显高过底噪的那一档才把样本喂给解码器：
-   * 单档发包时实际只有 3 个解码器在跑，CPU 降到 1/3 左右。 */
-  var gateFloor = {}, gateOn = { mid: true, hi: true, top: true }, gateLogAt = 0;
+  /* ---------- 频带能量门控（第 2 版） ----------
+   * 上一版有个致命问题：底噪基线一开始就取「第一块音频的能量」，如果监听时对方已经在发，
+   * 基线就等于信号本身 → 门控把信号当成底噪、永远不放行，样本一个都喂不进解码器
+   * （真机现象：同步失败 0 次、命中 0/8、什么都没解出）。
+   * 这一版：开麦后先留 400ms 量环境底噪（正常都是先开麦再发包），之后用「快降慢升」的
+   * 地板跟踪；另外每隔 8 块无条件放行一块做盲探，就算门控判断错了也不会永久失明。 */
+  var gateFloorDb = {}, gateN = 0, gateWarm = 0, gateHold = {}, gateLogAt = 0;
   function gateProbe(chunk) {
     var sr = ctx ? ctx.sampleRate : 48000;
     var n = Math.min(chunk.length, Math.round(sr * 0.06));
     if (n < 512) return;
     var sl = chunk.subarray(chunk.length - n);
-    var any = false;
+    gateN++;
+    var es = {}, maxE = 0, maxKey = null;
     Ultra.BANDS.forEach(function (b) {
       var e = Ultra.bandEnergy(sl, sr, b).peak;
-      var f = gateFloor[b.key];
-      if (f == null) f = e;
-      if (e < f) f = e;
-      else f = f * 0.995 + e * 0.005;      // 底噪慢慢往上爬，避免一次大声之后永久失灵
-      gateFloor[b.key] = f;
-      var open = e > f * 3.5 && e > 1e-9;
-      gateOn[b.key] = open;
-      if (open) any = true;
+      es[b.key] = e;
+      if (e > maxE) { maxE = e; maxKey = b.key; }
     });
-    /* 三档全静的时候，反正也没有包可解，样本直接丢掉更省 CPU。 */
-    if (any) {
-      var now = performance.now();
-      if (now - gateLogAt > 4000) {
-        gateLogAt = now;
-        var act = Ultra.BANDS.filter(function (b) { return gateOn[b.key]; })
-          .map(function (b) { return b.name; }).join('/');
-        var cnt = decoders.filter(function (d) { return !d.muted && gateOn[d.band.key]; }).length;
-        if ($('dGate')) $('dGate').textContent = act + ' · ' + cnt + ' 个';
-      }
+    /* 前 400ms 当作环境底噪（这段不计入放行判断，也不喂样本，代价很小）。 */
+    if (gateWarm < 5) {
+      gateWarm++;
+      Ultra.BANDS.forEach(function (b) {
+        var f = gateFloorDb[b.key];
+        gateFloorDb[b.key] = f == null ? es[b.key] : Math.min(f, es[b.key]);
+      });
+      Ultra.BANDS.forEach(function (b) { gateOn[b.key] = false; });
+      if ($('dGate')) $('dGate').textContent = '量底噪… ' + gateWarm + '/5';
+      return;
+    }
+    /* 地板快降慢升：比地板小就立刻跟着降，比地板大只允许每次抬 2%，
+     * 这样持续发包时地板不会一路追到信号电平上把门关死。 */
+    Ultra.BANDS.forEach(function (b) {
+      var f = gateFloorDb[b.key];
+      if (f == null || es[b.key] < f) f = es[b.key];
+      else f = Math.min(es[b.key], f * 1.02);
+      gateFloorDb[b.key] = f;
+      var lvl = es[b.key] > Math.max(f * 2.5, 1e-9) && es[b.key] > maxE * 0.2;
+      gateOn[b.key] = lvl;
+      if (lvl) gateHold[b.key] = performance.now();
+    });
+    /* 刚刚有声、现在判断成静音 → 再放行 400ms，避免包和包之间的缝隙把锁弄断。 */
+    Ultra.BANDS.forEach(function (b) {
+      if (!gateOn[b.key] && gateHold[b.key] && performance.now() - gateHold[b.key] < 400) gateOn[b.key] = true;
+    });
+    var now = performance.now();
+    if (now - gateLogAt > 2000) {
+      gateLogAt = now;
+      var act = Ultra.BANDS.filter(function (b) { return gateOn[b.key]; })
+        .map(function (b) { return b.name; }).join('/') || '无';
+      var cnt = decoders.filter(function (d) { return !d.muted && gateOn[d.band.key]; }).length;
+      if ($('dGate')) $('dGate').textContent = act + ' · ' + cnt + ' 个';
     }
   }
+  /* 每 8 块无条件全放行一次：门控只用来省 CPU，绝不作为「能不能解出」的唯一闸门。 */
+  function gateBlind() { return (gateN % 8) === 0; }
 
   /* ---------- 接收 ---------- */
   function makeDecoders(sr) {
@@ -468,6 +490,13 @@ var App = (function () {
   var ackPrevGain = null;
   function ackGainOn() { if (ackPrevGain == null) { ackPrevGain = Ultra.getGain(); Ultra.setGain(0.9); } }
   function ackGainOff() { if (ackPrevGain != null) { Ultra.setGain(ackPrevGain); ackPrevGain = null; } }
+  var ackSentN = 0;
+  function ackMark() {
+    ackSentN++;
+    var el = document.getElementById('ackSent');
+    if (el) el.textContent = '回执：本机已发 ' + ackSentN + ' 次 · 18.1k / ' + ACK_SP + 'ms（最近 ' +
+      new Date().toTimeString().slice(0, 8) + '）';
+  }
 
   /* 接收端回执：只要还有缺包、链路开着，就每 2.2 秒回一次位图，直到收齐。
    * 以前用「静默 0.9 秒」当触发条件，一旦解码器反复吐同一个包，lastPktAt 永远在刷新，
@@ -490,6 +519,7 @@ var App = (function () {
       (function oneOk() {
         if (on >= oc) { ackGainOff(); return; }
         on++;
+        ackMark();
         tx.send(okPkt, ob, ACK_SP, function () { setTimeout(oneOk, 200); });
       })();
       return;
@@ -509,6 +539,7 @@ var App = (function () {
     (function one() {
       if (n >= ACK_COPIES) { ackGainOff(); return; }
       n++;
+      ackMark();
       tx.send(pkt, b, ACK_SP, function () { setTimeout(one, 200); });
     })();
   }
@@ -522,6 +553,7 @@ var App = (function () {
     ackLoopAt = now;
     var pkt = Ultra.buildPacket(Ultra.ackPayload(1, 1, function () { return false; }));
     ackGainOn();
+    ackMark();
     tx.send(pkt, Ultra.bandByKey(ACK_BAND), ACK_SP, function () { ackGainOff(); });
   }
 
@@ -748,8 +780,8 @@ var App = (function () {
     if (p.type === 'text') {
       // 同一段文字再发一次时要「续收」而不是清空重来：缺哪包补哪包，
       // 这就是没有反向信道时的手动 ARQ —— 再点一次发送，缺的几包通常就补上了。
-      if (p.seq === 0 && textState.total !== p.total) { textState = { total: p.total, parts: {} }; lastAckAt = 0; ackDoneSent = 0; }
-      if (!textState.total) textState = { total: p.total, parts: {} };
+      /* 任何一包的包头都带 total：哪怕第 0 包丢了，只要解出别的包也能知道总数、也能发回执。 */
+      if (textState.total !== p.total) { textState = { total: p.total, parts: {} }; lastAckAt = 0; ackDoneSent = 0; }
       textState.parts[p.seq] = p.data;
       lastPktAt = performance.now();
       if (Object.keys(textState.parts).length === textState.total) {
@@ -925,10 +957,9 @@ var App = (function () {
     ackProc = null; ackSrc = null; ackDec = null; ackBusy = false;
   }
 
-  /* ---- 回执信号强度表 ----
-   * 以前发端只听「解出/没解出」，分不清三种情况：对方根本没发、发了但电脑听不见、听得到却解不开。
+  /* ---- 回执信号强度表 ----   * 以前发端只听「解出/没解出」，分不清三种情况：对方根本没发、发了但电脑听不见、听得到却解不开。
    * 这里在回执麦克风上直接量 18.1k 那档的峰值与相对底噪的强度，实时显示在发送端。 */
-  var ackFloorDb = null, ackShowAt = 0, ackLastDb = -99, ackLastF = 0;
+  var ackFloorDb = null, ackShowAt = 0, ackLastDb = -99, ackLastF = 0, ackMaxDbfs = -120;
   function ackMeter(c) {
     var sr = ctx ? ctx.sampleRate : 48000;
     var b = Ultra.bandByKey(ACK_BAND);
@@ -938,6 +969,9 @@ var App = (function () {
     else ackFloorDb = ackFloorDb * 0.99 + db * 0.01;
     var rel = db - ackFloorDb;
     ackLastDb = rel;
+    var amp = 2 * Math.sqrt(Math.max(0, e)) / Math.min(c.length, Math.round(sr * 0.08));
+    var dbfs = 20 * Math.log10(amp + 1e-9);
+    if (dbfs > ackMaxDbfs) ackMaxDbfs = dbfs;
     var now = performance.now();
     if (now - ackShowAt < 120) return;
     ackShowAt = now;
@@ -949,10 +983,10 @@ var App = (function () {
     el.textContent = (pk.f ? pk.f : (hot ? '有信号' : '安静'));
     el.style.color = hot ? 'var(--accent-2)' : 'var(--muted)';
     var tg = $('ackSigTag');
-    if (tg) tg.textContent = '回执监听 · 强度 +' + Math.max(0, rel).toFixed(0) + ' dB（相对底噪）';
+    if (tg) tg.textContent = '回执监听 · 强度 +' + Math.max(0, rel).toFixed(0) + ' dB · 峰值 ' + ackMaxDbfs.toFixed(0) + ' dBFS';
   }
   function ackMeterReset() {
-    ackFloorDb = null; ackLastDb = -99; ackLastF = 0;
+    ackFloorDb = null; ackLastDb = -99; ackLastF = 0; ackMaxDbfs = -120;
     var lv = $('ackLive'); if (lv) lv.style.display = 'flex';
     var el = $('ackSig'); if (el) { el.textContent = '聆听中'; el.style.color = 'var(--muted)'; }
   }
@@ -1071,8 +1105,8 @@ var App = (function () {
       log('第 ' + round + ' 轮发送 ' + pending.length + ' 包' + (round > 1 ? '（补缺）' : ''));
       transmit(pending, function () {
         if (!alive()) return;
-        log('等待对方回执…（约 6 秒）');
-        ackListen(6000, function (ack) {
+        log('等待对方回执…（约 8 秒）');
+        ackListen(8000, function (ack) {
           if (!alive()) return;
           if (!ack) { log('没收到回执：这一轮当作全部失败，重发全部', '#b4791f'); round++; loop(); return; }
           var miss = ack.missing();
@@ -1481,10 +1515,11 @@ var App = (function () {
           /* 先花很小代价（三档各 8 个 Goertzel）测一下现在哪一档里有声音，
            * 只把这一档的解码器喂进去。手机跑满 9 个解码器会掉样，实测只剩 60% 采样。 */
           gateProbe(chunk);
+          var blind = gateBlind();
           for (var i = 0; i < decoders.length; i++) {
             var d = decoders[i];
             if (d.muted) continue;
-            if (!gateOn[d.band.key]) continue;
+            if (!blind && !gateOn[d.band.key]) continue;
             d.push(chunk);
           }
           rxTotal += chunk.length;
