@@ -339,7 +339,7 @@
 /* ================= 版本 / 語系 / 彈窗 / 紀錄 =================
  * 這一層獨立於 App 內核之外：只碰 DOM，不碰音頻。
  * 目的：畫面乾淨、按鈕少、紀錄能一鍵帶走。 */
-var VER = { v: 'v2026-11-26u', t: '2026-11-26 18:05' };
+var VER = { v: 'v2026-11-26v', t: '2026-11-26 18:20' };
 
 /* ---------- 彈窗 ---------- */
 var Dlg = {
@@ -652,7 +652,7 @@ var Lang = (function () {
 })();
 </script>
 
-<script src="ultra-core.js?v=20261126u"></script>
+<script src="ultra-core.js?v=20261126v"></script>
 <script>
 var App = (function () {
   /* ===== 单档单速（2026-11-25 起）=====
@@ -1618,14 +1618,18 @@ var App = (function () {
   function ensureCtx() {
     if (!ctx) {
       ctx = Ultra.makeCtx();
-      window.tx = new Ultra.Tx(ctx);
+      /* v-s 那次把它改成只赋 window.tx，忘了页内所有发送都走局部变量 tx，
+       * 于是 tx 一直是 null：Ping、預檢、正式发送全部报「reading 'play' / 'send' of null」。
+       * 两个都要赋，window.tx 只是给跨 IIFE 的读数用。 */
+      tx = window.tx = new Ultra.Tx(ctx);
       try {
         outAnalyser = ctx.createAnalyser();
         outAnalyser.fftSize = 4096;
         outAnalyser.connect(ctx.destination);
         tx.out = outAnalyser;               // 声音经 analyser 再出，才能量到自己
-      } catch (e) { outAnalyser = null; }
+      } catch (e) { outAnalyser = null; tx.out = null; }
     }
+    if (!tx && window.tx) tx = window.tx;      // 兜底：万一哪次又只赋了一边
     if (ctx.state === 'suspended') ctx.resume();
     if ($('sSr')) $('sSr').textContent = ctx.sampleRate + ' Hz';
     if (!outTimer) outTimer = setInterval(outPeakOnce, 200);
