@@ -339,7 +339,7 @@
 /* ================= 版本 / 語系 / 彈窗 / 紀錄 =================
  * 這一層獨立於 App 內核之外：只碰 DOM，不碰音頻。
  * 目的：畫面乾淨、按鈕少、紀錄能一鍵帶走。 */
-var VER = { v: 'v2026-11-26s', t: '2026-11-26 17:25' };
+var VER = { v: 'v2026-11-26t', t: '2026-11-26 17:40' };
 
 /* ---------- 彈窗 ---------- */
 var Dlg = {
@@ -649,7 +649,7 @@ var Lang = (function () {
 })();
 </script>
 
-<script src="ultra-core.js?v=20261126s"></script>
+<script src="ultra-core.js?v=20261126t"></script>
 <script>
 var App = (function () {
   /* ===== 单档单速（2026-11-25 起）=====
@@ -1227,6 +1227,7 @@ var App = (function () {
   var barLv = {}, barDb = {}, lastScan = { f: 0, db: 0, v: 0 };
   var HF_LO = 17000, HF_HI = 23800, HF_STEP = 200;
   function paintMeters(slice, sr) {
+    meterT = Date.now();
     /* 条子 = 「音格平均能量 / 音间平均能量」，三档各算一次取最大。
      * 为什么不用「最强一格比中位数高多少」：手机麦克风在高频段一路滚降，
      * 拿整段的中位数当 0，低格就永远比它高十几 dB，人还没开始发送条子就顶格了。
@@ -1276,18 +1277,48 @@ var App = (function () {
   }
 
   function paintTxLevel() {
+    meterT = Date.now();
     var nm = $('nm-hf'); if (nm) nm.textContent = '播音';
     var db = window.tx.levelDb;
     lastScan = { f: 0, v: 0, db: -99 };
     paintPct(db <= -60 ? 0 : Math.min(100, Math.round((db + 60) / 54 * 100)));
   }
 
+  /* 帧心跳：每画一帧就记一次时间。画面被冻住（麦克风被系统掐掉、页面进后台、按了停止）
+   * 时没有新帧进来，条子必须自己落回 0，而不是把最后一帧顶在 100% 不动。 */
+  var meterT = 0, hotN = 0;
+
+  function resetMeter() {
+    hotN = 0;
+    meterT = 0;
+    barLv.hf = 0;
+    barDb.hf = -99;
+    lastScan = { f: 0, v: 0, db: 0 };
+    var bar = $('bar-hf'), val = $('val-hf'), nm = $('nm-hf');
+    if (bar) bar.style.width = '0%';
+    if (val) val.textContent = '0%';
+    if (nm) nm.textContent = '收音';
+  }
+
   function paintBar(best) {
-    /* 纯噪声下这个比值实测能到 12–14 dB，所以 14 dB 以内一律 0，14→30 dB 映射到 0→100%。 */
+    /* 纯噪声下这个比值实测能到 12–14 dB，所以 14 dB 以内一律 0，14→30 dB 映射到 0→100%。
+     * 另加「连续两帧都过线」：单帧的尖峰（拍桌子、说话、手指碰麦）只能骗过一帧，
+     * 真在发双音时每帧都有 2 条音在响，绝不会只热一帧。 */
     barDb.hf = best;
-    var tgt = best <= 14 ? 0 : Math.max(0, Math.min(100, Math.round((best - 14) / 16 * 100)));
+    if (best > 14) hotN++; else hotN = 0;
+    var tgt = 0;
+    if (hotN >= 2) tgt = Math.max(0, Math.min(100, Math.round((best - 14) / 16 * 100)));
     paintPct(tgt);
   }
+
+  /* 画面冻住就归零：麦克风被系统掐掉、页面进后台、按了「停止」，
+   * 都不会再有新帧进来，这时必须把条子清零，而不是把最后一帧顶在满格不动。
+   * 上一版真机日志里 16:48:51 之后连续两分钟全是同一个 +24dB，就是这个原因。 */
+  function meterWatch() {
+    if (typeof window.tx === 'object' && window.tx && window.tx.busy) return;  // 播音时由 outPeakOnce 驱动
+    if (Date.now() - meterT > 900 && ((barLv.hf || 0) > 0 || hotN)) resetMeter();
+  }
+  if (!window.__meterWatchTimer) window.__meterWatchTimer = setInterval(meterWatch, 250);
 
   function paintPct(tgt) {
     var prev = barLv.hf || 0;
@@ -2375,6 +2406,7 @@ var App = (function () {
       if (micStream) { micStream.getTracks().forEach(function (t) { t.stop(); }); micStream = null; }
       $('btnMic').disabled = false;
       $('btnStop').disabled = true;
+      resetMeter();
       setState('已停止', false);
       log('停止监听');
     },
