@@ -334,7 +334,7 @@
 /* ================= 版本 / 語系 / 彈窗 / 紀錄 =================
  * 這一層獨立於 App 內核之外：只碰 DOM，不碰音頻。
  * 目的：畫面乾淨、按鈕少、紀錄能一鍵帶走。 */
-var VER = { v: 'v2026-11-26f', t: '2026-11-26 09:55' };
+var VER = { v: 'v2026-11-26g', t: '2026-11-26 14:56' };
 
 /* ---------- 彈窗 ---------- */
 var Dlg = {
@@ -415,7 +415,8 @@ window.REC = (function () {
       t: hms(new Date()),
       f: pk && /^\d+$/.test(pk.textContent) ? +pk.textContent : 0,
       h: hits ? +hits.textContent || 0 : 0,
-      r: drop && /%$/.test(drop.textContent || '') ? parseFloat(drop.textContent) : null
+      r: drop && /%$/.test(drop.textContent || '') ? parseFloat(drop.textContent) : null,
+      lv: Math.round(window.__snr || -99)
     };
     snaps.push(st); if (snaps.length > 90) snaps.shift();
     if (st.f) rx.peak.push(st.f);
@@ -457,7 +458,9 @@ window.REC = (function () {
       (tx.secs > 0 ? (tx.bytes / tx.secs).toFixed(1) : 0) + ' B/s · ' + tx.rounds + ' 輪');
 
     out.push('', '--- 逐秒採樣（近 ' + snaps.length + ' 秒：頻率/同步命中/收樣率）---');
-    out.push(snaps.map(function (s) { return s.t + ' ' + (s.f || '-') + 'Hz h=' + s.h + '/8 ' + (s.r == null ? '-' : s.r + '%'); }).join('\n'));
+    out.push(snaps.map(function (s) { return s.t + ' ' + (s.f ? s.f + 'Hz' : '-Hz') + ' ' +
+      (s.lv == null || s.lv < -90 ? '-' : (s.lv > 0 ? '+' : '') + s.lv + 'dB') +
+      ' h=' + s.h + '/8 ' + (s.r == null ? '-' : s.r + '%'); }).join('\n'));
 
     out.push('', '--- 事件 ---', lines.slice(-120).join('\n'));
     out.push('', '--- 解碼器（同步/邊距/縮放，近 ' + Math.min(diags.length, 120) + ' 條）---', diags.slice(-120).join('\n'));
@@ -635,7 +638,7 @@ var Lang = (function () {
 })();
 </script>
 
-<script src="ultra-core.js?v=20261126f"></script>
+<script src="ultra-core.js?v=20261126g"></script>
 <script>
 var App = (function () {
   /* ===== 单档单速（2026-11-25 起）=====
@@ -1165,7 +1168,7 @@ var App = (function () {
     log('文件完成：' + fileState.name, '#0a5f4f');
   }
 
-  var tickN = 0, lastChunk = null;
+  var tickN = 0, lastChunk = null, lastSnr = -99;
   var rxTotal = 0, rxT0 = 0, dropWarned = false;
 
   function meterTick(chunk) {
@@ -1185,14 +1188,19 @@ var App = (function () {
     tickN++;
     if (tickN % 2 === 0) {                     // 约每 0.17 秒刷一次，肉眼就是「实时」
       var pk = Ultra.peakFreq(slice, sr, 16000, 23800, 80);
+      var e2 = Ultra.bandEnergy(slice, sr, band);
+      var fl2 = gateLatestE.floor || 0;
+      var snr2 = fl2 > 0 ? 10 * Math.log10(Math.max(e2.peak, 1e-18) / fl2) : 0;
+      lastSnr = snr2; window.__snr = snr2;
+      var hot2 = gateOn.mid && snr2 > 3 && pk.f > 0;
       var el = $('dPeak');
       if (el) {
-        el.textContent = pk.f ? pk.f : '安静';
-        el.style.fontSize = pk.f ? '38px' : '22px';
-        el.style.color = pk.f >= 17500 ? 'var(--accent-2)' : (pk.f ? '#c0392b' : 'var(--muted)');
+        el.textContent = hot2 ? pk.f : '—';
+        el.style.fontSize = hot2 ? '38px' : '22px';
+        el.style.color = hot2 ? 'var(--accent-2)' : 'var(--muted)';
       }
       var lv = $('rxNow');
-      if (lv) lv.textContent = pk.f ? ('听到 ' + (pk.f >= 17500 ? '超声' : '低频杂音')) : '很安静';
+      if (lv) lv.textContent = hot2 ? (pk.f + ' Hz · +' + snr2.toFixed(0) + ' dB') : (gateOn.mid ? '有能量但沒頻點' : '安靜');
       updateDbg();
     }
     maybeAck();
@@ -1216,13 +1224,21 @@ var App = (function () {
     }
     tickN++;
     var pk = Ultra.peakFreq(slice, sr, 16000, 23800, 80);
+    /* 只有「确实比底噪高」才算听到，否则一律显示 —— 。
+     * 没有信号时 peakFreq 也会返回一个最大值的频率（噪声里总有个最高的点），
+     * 过去把它原样印出来，看起来就像「18k 一直有背景音」。 */
+    var fl = gateLatestE.floor || 0;
+    var snr = fl > 0 ? 10 * Math.log10(Math.max(e.peak, 1e-18) / fl) : 0;
+    lastSnr = snr; window.__snr = snr;
+    var hot = gateOn.mid && snr > 3 && pk.f > 0;
     var el = $('dPeak');
     if (el) {
-      el.textContent = pk.f ? pk.f : '安静';
-      el.style.fontSize = pk.f ? '38px' : '22px';
-      el.style.color = pk.f >= 17500 ? 'var(--accent-2)' : (pk.f ? '#c0392b' : 'var(--muted)');
+      el.textContent = hot ? pk.f : '—';
+      el.style.fontSize = hot ? '38px' : '22px';
+      el.style.color = hot ? 'var(--accent-2)' : 'var(--muted)';
     }
     var lv = $('rxNow');
+    if (lv) lv.textContent = hot ? (pk.f + ' Hz · +' + snr.toFixed(0) + ' dB') : (gateOn.mid ? '有能量但沒頻點' : '安靜');
     /* 手机屏幕上必须能直接看出「同步头到底命中了几个」——这是「听到了却解不出」唯一的判据。
      * 0/8：解码器根本没形成候选（多半是缩放/节奏对不上）；6~7/8：锁门开得太严。 */
     if (decoders.length && decoders[0].scanBest) {
@@ -1230,7 +1246,6 @@ var App = (function () {
       decoders[0].scanBest = 0;
     }
     if (now() - rxBestAt > 1000) { rxBestHits = 0; rxBestAt = now(); }
-    if (lv) lv.textContent = pk.f ? (pk.f >= 17500 ? '聽到超聲' : '低頻雜音') : '安靜';
     var hitsEl = $('rxHits');
     if (hitsEl) hitsEl.textContent = rxBestHits;
     /* 收样率：回调里只累加样本数，这里算比值 —— 这才是「麦克风到底喂进来多少」的真数。 */
@@ -1499,8 +1514,24 @@ var App = (function () {
   function ackListen(ms, done) {
     ackGot = null;
     ackMeterReset();
+    var fired = false;
+    /* 兜底：麥克風權限提示沒人按、或裝置被別的程序佔住時，getUserMedia 會一直掛著不 resolve，
+     * 整條流程就無聲無息停住（v-e/f 的「預檢停在②」就是這樣，日誌裡什麼都不會出現）。
+     * 這裡給一個確定會響的鬧鐘：超過 ms + 2.5 秒還沒結束，就當作沒收到回執往下走。 */
+    var guard = setTimeout(function () {
+      if (fired) return;
+      fired = true;
+      ackMeterOff();
+      log('回執監聽超時：' + Math.round((ms + 2500) / 1000) + ' 秒內沒跑完 —— 麥克風沒授權（瀏覽器位址列要按允許）、' +
+        '或被別的分頁/程式佔用。這一輪按「沒收到回執」處理', '#c0392b');
+      done(null);
+    }, ms + 2500);
     ackOpen().then(function () {
+      if (fired) return;
       setTimeout(function () {
+        if (fired) return;
+        fired = true;
+        clearTimeout(guard);
         var st = ackStat ? ackStat() : null;
         var peakDb = ackLastDb, peakF = ackLastF;
         ackMeterOff();
@@ -1517,6 +1548,9 @@ var App = (function () {
         done(ackGot);
       }, ms);
     }).catch(function (e) {
+      if (fired) return;
+      fired = true;
+      clearTimeout(guard);
       ackMeterOff();
       log('开麦失败（无法收回执）：' + (e && e.name ? e.name : e) +
         '。麦克风被别的应用/标签页占着，或系统没给权限 —— 关掉它们再试，或改成「不等（盲发）」', '#c0392b');
