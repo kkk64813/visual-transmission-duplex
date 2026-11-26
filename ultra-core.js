@@ -688,6 +688,10 @@ var GAIN = 0.72;          // 默认标准音量：够响，又不至于让喇叭
 
   StreamDecoder.prototype.push = function (chunk) {
     if (this._busy) return;
+    /* 记最近一次「听到能量」的时刻：自动重测缩放只在真的有声音时才做，安静时不去烧 CPU。 */
+    var _e = 0;
+    for (var _i = 0; _i < chunk.length; _i += 8) { var _v = chunk[_i]; _e += _v * _v; }
+    if (_e / Math.max(1, chunk.length / 8) > 9e-6) this._energyAt = (typeof performance !== 'undefined' ? performance.now() : Date.now());
     if (chunk.length >= this.cap) chunk = chunk.subarray(chunk.length - this.cap);
     var overflow = this.fill + chunk.length - this.cap;
     if (overflow > 0) {
@@ -703,6 +707,19 @@ var GAIN = 0.72;          // 默认标准音量：够响，又不至于让喇叭
 
   StreamDecoder.prototype._drain = function () {
     var symLen = this.symLen;
+    /* 自動重測縮放：只要「聽得到聲音、卻連續 0.9 秒鎖不上」，就在背景用量絕對頻率的方式
+     * 重估一次 scale。這一步完全不依賴當前 fScale，所以「種子/上次校正」被寫歪也能救回來。
+     * 真機上「聽得到但同步 0/8」最主要的原因就是 fScale 落在錯的值上（差 0.8% 就全掛）。 */
+    var nowT = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+    if (nowT - (this._lockAt || 0) > 900 && nowT - (this._huntAt || 0) > 900 &&
+        nowT - (this._energyAt || -1e9) < 700 && this.fill > this.sr * 0.45) {
+      this._huntAt = nowT;
+      var hc = this.locateScale(380);
+      if (hc && hc.ok && !this.forceScale) {
+        if (Math.abs(hc.scale - this.fScale) > 5e-4) this._diag('cal', '自動重測縮放 ×' + hc.scale.toFixed(4) + '（同步 ' + hc.hits + '/8）');
+        this.fScale = hc.scale;
+      }
+    }
     if (this.syncAbs >= 0) {
       var needEnd = this.syncAbs + this.totalSyms * symLen;
       if (needEnd - this.abs0 <= this.fill) { this._decodePacket(); return; }
@@ -760,6 +777,7 @@ var GAIN = 0.72;          // 默认标准音量：够响，又不至于让喇叭
       if (needLen <= 0 || needLen > this.maxPayload) continue;
 
       this.syncAbs = a2;
+      this._lockAt = (typeof performance !== 'undefined' ? performance.now() : Date.now());
       this.totalSyms = this.pat.length + (this.dual ? 2 : 3) * (2 + needLen + 2);
       this.scanAbs = a2;
       this.lastHits = ver;

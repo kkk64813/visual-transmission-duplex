@@ -339,7 +339,7 @@
 /* ================= 版本 / 語系 / 彈窗 / 紀錄 =================
  * 這一層獨立於 App 內核之外：只碰 DOM，不碰音頻。
  * 目的：畫面乾淨、按鈕少、紀錄能一鍵帶走。 */
-var VER = { v: 'v2026-11-26j', t: '2026-11-26 15:16' };
+var VER = { v: 'v2026-11-26k', t: '2026-11-26 15:33' };
 
 /* ---------- 彈窗 ---------- */
 var Dlg = {
@@ -649,7 +649,7 @@ var Lang = (function () {
 })();
 </script>
 
-<script src="ultra-core.js?v=20261126j"></script>
+<script src="ultra-core.js?v=20261126k"></script>
 <script>
 var App = (function () {
   /* ===== 单档单速（2026-11-25 起）=====
@@ -677,7 +677,7 @@ var App = (function () {
   var ackReplyOn = true;           // 接收端：缺包时自动回执
   var waitAckOn = true;            // 发送端：等回执再补包
   var lastPktAt = 0, lastAckAt = 0, ackRound = 0, lastCalAt = 0;
-  var rxBestHits = 0, rxBestAt = 0;
+  var rxBestHits = 0, rxBestAt = 0, lockWarnAt = 0;
   function now() { return performance.now ? performance.now() : Date.now(); }
   var ackDec = null, ackProc = null, ackSrc = null, ackMic = null, ackBusy = false, ackDead = false;
   var loopTimer = null, loopN = 0, loopOn = false; // 循环发校准包
@@ -1277,6 +1277,13 @@ var App = (function () {
       decoders[0].scanBest = 0;
     }
     if (now() - rxBestAt > 1000) { rxBestHits = 0; rxBestAt = now(); }
+    /* 聽得到能量、卻一個同步候選都沒有 —— 這是真機最常見的卡點（多為縮放落在錯的值）。
+     * 把它寫進日誌（每 3 秒一次），並註明背景正在自動重測，免得每次都要猜。 */
+    if (gateOn.mid && rxBestHits === 0 && now() - lockWarnAt > 3000) {
+      lockWarnAt = now();
+      log('聽得到能量但鎖不上：目前縮放 ×' + (decoders.length ? decoders[0].fScale.toFixed(4) : '?') +
+        '（背景會自動重測；若一直不行，兩端確認同為' + (dualOn() ? '雙音' : '單音') + '、且音量夠）', '#b4791f');
+    }
     var hitsEl = $('rxHits');
     if (hitsEl) hitsEl.textContent = rxBestHits;
     /* 收样率：回调里只累加样本数，这里算比值 —— 这才是「麦克风到底喂进来多少」的真数。 */
@@ -1699,11 +1706,13 @@ var App = (function () {
         onProgress && onProgress(idx, packets.length, round);
         markTx(b, true);
         var pkt = Ultra.buildPacket(packets[idx]);
-        /* 每次发送的第一包前面自动播 5 轮标尺音（约 0.96 秒）：
-         * 收端听到这段就把本链路的频率缩放量出来，不需要任何人去点「校正」。 */
-        if (round === 1 && j === 1 && !skipRuler) {
-          log('发送前自动播标尺音 1.07s（300ms 定位音 + 4 轮同步，对端自动校准）');
-          tx.sendCal(pkt, b, symMs, 4, function () { setTimeout(one, 150); });
+        /* 每一轮的第一包前面都自动播标尺音：对端靠「绝对频率」重测缩放，
+         * 不需要任何人按「校正」按钮 —— 这是「听得到却同步 0/8」最稳的解药。
+         * 首轮播 4 轮（1.07s，顺便让对端校准），补包轮播 2 轮（0.68s，够重测）。 */
+        if (j === 1 && !(round === 1 && skipRuler)) {
+          var rr = (round === 1) ? 4 : 2;
+          log('第 ' + round + ' 轮前播标尺 ' + (rr === 4 ? '1.07s' : '0.68s') + '（对端用绝对频率重测缩放）');
+          tx.sendCal(pkt, b, symMs, rr, function () { setTimeout(one, 150); });
         } else {
           tx.send(pkt, b, symMs, function () { setTimeout(one, 150); });
         }
