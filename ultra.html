@@ -334,7 +334,7 @@
 /* ================= 版本 / 語系 / 彈窗 / 紀錄 =================
  * 這一層獨立於 App 內核之外：只碰 DOM，不碰音頻。
  * 目的：畫面乾淨、按鈕少、紀錄能一鍵帶走。 */
-var VER = { v: 'v2026-11-26c', t: '2026-11-26 09:16' };
+var VER = { v: 'v2026-11-26d', t: '2026-11-26 09:44' };
 
 /* ---------- 彈窗 ---------- */
 var Dlg = {
@@ -356,7 +356,7 @@ document.addEventListener('click', function (e) {
 /* ---------- 雙向紀錄 ---------- */
 window.REC = (function () {
   var lines = [], diags = [], snaps = [];
-  var rx = { pkts: 0, bytes: 0, first: 0, last: 0, maxHits: 0, crc: 0, err: 0, peak: [], scale: null, peer: null };
+  var rx = { pkts: 0, bytes: 0, first: 0, last: 0, maxHits: 0, crc: 0, err: 0, peak: [], scale: null, peer: null, online: 0 };
   var tx = { done: 0, bytes: 0, secs: 0, ok: null, rounds: 0 };
   var T0 = new Date();
 
@@ -450,6 +450,7 @@ window.REC = (function () {
       var xs = rx.peak.slice(-60).sort(function (a, b) { return a - b; });
       out.push('RX 峰值頻率 中位=' + xs[Math.floor(xs.length / 2)] + 'Hz 區間=' + xs[0] + '–' + xs[xs.length - 1] + 'Hz');
     }
+    out.push('對方在線=' + (rx.online ? '是（收到就緒握手）' : '否（沒收到就緒握手）'));
     if (rx.peer) out.push('對方觀測（隨回執帶回）同步最好=' + rx.peer.hits + '/8 · 邊距=' + rx.peer.margin + ' dB');
     if (tx.done) out.push('TX 最後一次=' + (tx.ok ? '成功' : '未確認') + ' ' + tx.bytes + 'B /' + tx.secs.toFixed(1) + 's = ' +
       (tx.secs > 0 ? (tx.bytes / tx.secs).toFixed(1) : 0) + ' B/s · ' + tx.rounds + ' 輪');
@@ -472,6 +473,7 @@ window.REC = (function () {
     var xs = rx.peak.slice(-60).sort(function (a, b) { return a - b; });
     var med = xs.length ? xs[Math.floor(xs.length / 2)] : 0;
 
+    if (!rx.online) s.push('· 沒收到對方的「就緒握手」：手機沒在監聽（要按開始監聽），或頁面在後台被系統凍結、手機音量為 0。先解決這一步，其餘都不用看。');
     if (n > 0) s.push('· 正向鏈路已打通（解出 ' + n + ' 個包），問題在補包/回執或個別包丟失。');
     else if (rx.peer) {
       if (rx.peer.hits === 0) s.push('· 對方回報同步命中 0/8：對方的資料解碼器連同步頭都沒形成候選 —— 對方幾乎聽不到這檔音，換更低一檔或加音量。');
@@ -493,7 +495,7 @@ window.REC = (function () {
 
   function clear() {
     lines = []; diags = []; snaps = [];
-    rx = { pkts: 0, bytes: 0, first: 0, last: 0, maxHits: 0, crc: 0, err: 0, peak: [], scale: null, peer: null };
+    rx = { pkts: 0, bytes: 0, first: 0, last: 0, maxHits: 0, crc: 0, err: 0, peak: [], scale: null, peer: null, online: 0 };
     tx = { done: 0, bytes: 0, secs: 0, ok: null, rounds: 0 };
     var a = document.getElementById('log'), b = document.getElementById('logTx');
     if (a) a.textContent = ''; if (b) b.textContent = '';
@@ -632,7 +634,7 @@ var Lang = (function () {
 })();
 </script>
 
-<script src="ultra-core.js?v=20261126c"></script>
+<script src="ultra-core.js?v=20261126d"></script>
 <script>
 var App = (function () {
   /* ===== 单档单速（2026-11-25 起）=====
@@ -1444,10 +1446,19 @@ var App = (function () {
        * 解码器同时把所有「同步/CRC」计数留在 stat 里，监听结束时原样报出来 —— 这样
        * 「对方根本没发声」和「发了但我解不出」一眼能分开。 */
       var d = new Ultra.StreamDecoder(ctx.sampleRate, Ultra.bandByKey(ACK_BAND), ACK_SP, dualOn());
-      var maxHits = 0;
+      var maxHits = 0, echoN = 0, echoTypes = [];
       d.onPacket = function (p) {
         var pl = Ultra.parsePayload(p);
-        if (pl && pl.type === 'ack') { ackGot = pl; if (pl.diag) rx.peer = pl.diag; }
+        if (pl && pl.type === 'ack') { ackGot = pl; if (pl.round === 255) rx.online = 1; if (pl.diag) rx.peer = pl.diag; return; }
+        /* 不是回執的封包，只可能是自己喇叭的尾巴被麥克風收進來（本機沒開回聲消除）。
+         * 以前這種「自己解自己」會被算進「解出 N」，讓日誌看起來像對方回了東西，
+         * 實際上對方一句話都沒說 —— 這一版把它單獨計數並在日誌裡點명。 */
+        echoN++;
+        var t = pl ? pl.type : 'null';
+        if (echoTypes.indexOf(t) < 0) {
+          echoTypes.push(t);
+          log('回執通道解出非回執封包：type=' + t + (pl && pl.seq ? ' seq=' + pl.seq + '/' + pl.total : '') + '（不是回執，多半是自己喇叭尾巴）', '#b4791f');
+        }
       };
       d.onError = function (kind) { if (kind === 'sync' && d.lastHits > maxHits) maxHits = d.lastHits; };
       ackDec = [d];
@@ -1458,7 +1469,7 @@ var App = (function () {
         ackMeter(c);
       };
       ackStat = function () {
-        return { sync: d.stat.sync, crc: d.stat.crc, pk: d.stat.pk, maxHits: maxHits, hits: d.lastHits };
+        return { sync: d.stat.sync, crc: d.stat.crc, pk: d.stat.pk - echoN, echo: echoN, maxHits: maxHits, hits: d.lastHits };
       };
       ackSrc = ctx.createMediaStreamSource(stream);
       ackSrc.connect(ackProc);
@@ -1481,11 +1492,14 @@ var App = (function () {
         var peakDb = ackLastDb, peakF = ackLastF;
         ackMeterOff();
         if (!ackGot && st) {
-          log('回执监听结果：一个都没解出｜最强 18.1k 信号 ' + (peakDb > 0 ? '+' + peakDb.toFixed(0) : peakDb.toFixed(0)) +
-            ' dB@' + (peakF || '—') + '｜同步失败 ' + st.sync + '、CRC 失败 ' + st.crc +
-            '、最好同步命中 ' + st.maxHits + '/8、解出 ' + st.pk +
-            (peakDb > 6 ? '（听得到回执音但解不开：频率偏移/回声，让对端也做一次自动校正）'
-              : '（18.1k 基本没能量：手机压根没发回执，或手机回执音量被压到静默、距离太远）'), '#b4791f');
+          var lvl = peakDb > 0 ? '+' + peakDb.toFixed(0) : peakDb.toFixed(0);
+          var tail = '';
+          if (st.echo) tail = '（解出的 ' + st.echo + ' 個是「自己的喇叭尾巴」，不是對方回執：對方這段時間沒出聲）';
+          else if (peakDb > 6) tail = '（聽得到 18.1k，但一個符號都沒對上：兩邊頻率/符號時長不一致，或回執被喇叭削頂）';
+          else tail = '（18.1k 幾乎沒能量：對方沒在監聽、沒開自動回執、音量被壓掉，或距離太遠）';
+          log('回执监听结果：没收到回执｜最强 18.1k 信号 ' + lvl + ' dB@' + (peakF || '—') +
+            '｜同步失败 ' + st.sync + '、CRC 失败 ' + st.crc +
+            '、最好同步命中 ' + st.maxHits + '/8、解出回执 ' + st.pk + tail, '#b4791f');
         }
         done(ackGot);
       }, ms);
@@ -1564,6 +1578,10 @@ var App = (function () {
         ackListen(8000, function (ack) {
           if (!alive()) return;
           if (!ack) { log('没收到回执：这一轮当作全部失败，重发全部', '#b4791f'); round++; loop(); return; }
+          if (ack.round === 255) {
+            log('對方已上線（收到就緒握手）：對方在監聽、自動回執也開著，問題只在資料能不能過去', '#0a5f4f');
+            round++; loop(); return;
+          }
           if (ack.total === 0) {
             var dg = ack.diag;
             log('对方回执「听到了、但一包都没解出」' +
@@ -2024,6 +2042,16 @@ var App = (function () {
         setState('监听中', true);
         log('开始监听 · ' + ctx.sampleRate + ' Hz · ' + decoders.length + ' 个解码器（按能量门控只跑有声音的那档）');
         if (ctx.sampleRate < 48000) log('注意：设备只给到 ' + ctx.sampleRate + ' Hz，20.5k 档接近奈奎斯特，可能解不出，建议用 18.1k 档', '#b4791f');
+        /* 上線握手：開麥成功後放一次「我在聽」的短回執（round=255 標記）。
+         * 發端日誌因此能直接看出「對方根本沒在聽」還是「在聽但聽不到」——
+         * 上一版這兩種情況在日誌裡長得完全一樣，白白浪費一輪測試。 */
+        setTimeout(function () {
+          if (!running || !tx || !ctx || !ackReplyOn) return;
+          var pkt = Ultra.buildPacket(Ultra.ackPayload(255, 0, function () { return false; }, rxDiag()));
+          ackGainOn();
+          ackMark();
+          tx.send(pkt, Ultra.bandByKey(ACK_BAND), ACK_SP, function () { ackGainOff(); log('已發上線握手（對方日誌會顯示「對方已上線」）', '#0a5f4f'); });
+        }, 350);
       }).catch(function (e) {
         rxPending = false;
         log('麦克风打不开：' + (e && e.message ? e.message : e), '#c0392b');
