@@ -190,6 +190,11 @@ var GAIN = 0.72;          // 默认标准音量：够响，又不至于让喇叭
 
   /* 双音波形：每个符号同时发一个行音 + 一个列音，两路独立维持相位（等幅、频率滑音过渡）。 */
   function makeWaveformDual(packet, sr, band, symMs) {
+    /* 防呆：这里收的必须是「包字节」，不是已经合成好的样点。
+     * 如果把样点数组误当包传进来，按 200 字节的规则会合成出几十分钟的音频 ——
+     * 真机上的表现就是「按了发送，三分钟没反应」。所以超长直接抛错。 */
+    if (!packet || !packet.length) throw new Error('makeWaveformDual: 空包');
+    if (packet.length > 220) throw new Error('makeWaveformDual: 这不是包（' + packet.length + ' 字节）');
     var symLen = Math.round(sr * (symMs || 24) / 1000);
     var data = bytesToSymbols2(packet);
     var syms = new Uint8Array(2 + SYNC2.length + data.length);
@@ -237,6 +242,8 @@ var GAIN = 0.72;          // 默认标准音量：够响，又不至于让喇叭
     band = band || BANDS[2];
     symMs = symMs || 16;
     if (dual === undefined) dual = (MODE === 'dual');
+    if (!packet || !packet.length) throw new Error('makeWaveform: 空包');
+    if (packet.length > 220) throw new Error('makeWaveform: 这不是包（' + packet.length + ' 字节）');
     if (dual) return makeWaveformDual(packet, sr, band, symMs);
     var symLen = Math.round(sr * symMs / 1000);
     var data = bytesToSymbols(packet);

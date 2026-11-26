@@ -334,7 +334,7 @@
 /* ================= 版本 / 語系 / 彈窗 / 紀錄 =================
  * 這一層獨立於 App 內核之外：只碰 DOM，不碰音頻。
  * 目的：畫面乾淨、按鈕少、紀錄能一鍵帶走。 */
-var VER = { v: 'v2026-11-26e', t: '2026-11-26 09:48' };
+var VER = { v: 'v2026-11-26f', t: '2026-11-26 09:55' };
 
 /* ---------- 彈窗 ---------- */
 var Dlg = {
@@ -635,7 +635,7 @@ var Lang = (function () {
 })();
 </script>
 
-<script src="ultra-core.js?v=20261126e"></script>
+<script src="ultra-core.js?v=20261126f"></script>
 <script>
 var App = (function () {
   /* ===== 单档单速（2026-11-25 起）=====
@@ -1536,9 +1536,21 @@ var App = (function () {
     var seg = Ultra.makeRuler(ctx.sampleRate, b, sp, 4, 300, dualOn());
     log('預檢①：播 1.07s 標尺（對方會自動校準，並回一條就緒回執）');
     ackMeterReset();
-    tx.send(seg, b, sp, function () {
-      log('預檢②：等對方回執（' + Math.round((waitMs || 6000) / 1000) + ' 秒）…');
-      ackListen(waitMs || 6000, function (ack) {
+    /* 注意：這裡是「已經算好的音波」，必須走 tx.play(samples, cb)。
+     * tx.send(packet, …) 收的是位元組包、內部會再合成波形 —— 把樣本陣列當包丟進去，
+     * 會合成出一段幾分鐘長的垃圾音（v-e 的「預檢卡死」就是這個）。 */
+    var started = 0;
+    var watchdog = setTimeout(function () {
+      if (started) return;
+      log('預檢異常：標尺 5 秒還沒播完（音訊裝置被佔用或 ctx 掛起），跳過預檢直接發', '#b4791f');
+      done(false);
+    }, 5000);
+    try {
+      tx.play(seg, function () {
+        started = 1;
+        clearTimeout(watchdog);
+        log('預檢②：等對方回執（' + Math.round((waitMs || 6000) / 1000) + ' 秒）…');
+        ackListen(waitMs || 6000, function (ack) {
         if (!ack) {
           rx.pre = '未通過（對方無回執）';
           log('預檢未通過：對方沒有任何回執 —— 手機沒在監聽、沒開自動回執、音量為 0 或距離太遠。' +
@@ -1557,8 +1569,13 @@ var App = (function () {
           log('預檢通過：收到對方回執（對方未帶觀測資料，可能是舊頁面）', '#0a5f4f');
         }
         done(true);
+        });
       });
-    });
+    } catch (e) {
+      clearTimeout(watchdog);
+      log('預檢播放失敗：' + (e && e.message ? e.message : e) + '，跳過預檢直接發', '#c0392b');
+      done(false);
+    }
   }
 
   function sendReliable(packets, onProgress, onDone) {
