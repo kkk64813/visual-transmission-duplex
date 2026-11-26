@@ -214,6 +214,12 @@
         <button style="color:#c0392b" onclick="App.stopAll()">■ <span data-i18n="tx.halt">硬停</span></button>
         <button onclick="Dlg.open('dlgSet')">⚙</button>
       </div>
+      <div class="row" style="margin-top:8px" id="spdRow">
+        <span class="chip"><span data-i18n="tx.spd">符號時長</span></span>
+        <button class="seg on" data-sp="24" onclick="App.speed(24)">24ms</button>
+        <button class="seg" data-sp="36" onclick="App.speed(36)">36ms</button>
+        <button class="seg" data-sp="48" onclick="App.speed(48)">48ms</button>
+      </div>
       <div id="bandRow" class="hide"></div>
       <div class="hide" id="bandNote"></div>
     </div>
@@ -339,7 +345,7 @@
 /* ================= 版本 / 語系 / 彈窗 / 紀錄 =================
  * 這一層獨立於 App 內核之外：只碰 DOM，不碰音頻。
  * 目的：畫面乾淨、按鈕少、紀錄能一鍵帶走。 */
-var VER = { v: 'v2026-11-26y', t: '2026-11-26 19:30' };
+var VER = { v: 'v2026-11-26z', t: '2026-11-26 17:35' };
 
 /* ---------- 彈窗 ---------- */
 var Dlg = {
@@ -652,7 +658,7 @@ var Lang = (function () {
 })();
 </script>
 
-<script src="ultra-core.js?v=20261126y"></script>
+<script src="ultra-core.js?v=20261126z"></script>
 <script>
 var App = (function () {
   /* ===== 单档单速（2026-11-25 起）=====
@@ -834,8 +840,8 @@ var App = (function () {
   /* ---------- 接收 ---------- */
   function makeDecoders(sr) {
     decoders = [];
-    /* 只开一个：18.1k + 24ms。原来 3 档 × 3 速度 = 9 个解码器是手机卡死/掉样的总根源。 */
-    var b = Ultra.bandByKey(ONE_BAND), sp = ONE_SP;
+    /* 只开一个：18.1k + 当前符号时长。原来 3 档 × 3 速度 = 9 个解码器是手机卡死/掉样的总根源。 */
+    var b = Ultra.bandByKey(ONE_BAND), sp = symMs;
     var d = new Ultra.StreamDecoder(sr, b, sp, dualOn());
     /* 本工具的包最长 16B（设定里最大也就几十字节）。把上限压到 64：
      * 回声里凑巧对齐的假位置常把长度字段解成 130~150 字节，按 200 字节放行会让
@@ -2030,6 +2036,93 @@ var App = (function () {
     } else loop();
   }
 
+  /* ---------- 逐包確認（stop-and-wait）----------
+   * 上一包没有回执确认，就绝不发下一包：先把「这一条链路、在这一档速度下确实通」钉死，
+   * 通一包才放下一包。比「整批铺 6 遍」慢，但不会在对方压根没收到时空烧带宽。
+   * 每包最多重试 4 次，重试前补一段标尺让对端重新量缩放；4 次都不过就停，
+   * 并在日志里写清楚「先把两端符号时长一起调慢」这种可以照着做的动作。 */
+  function sendSteady(packets, onProgress, onDone) {
+    var tok = ++sendSeq;
+    var t0 = performance.now(), bytes = 0, i = 0, tries = 0, MAXT = 4, doneN = 0, skipRuler = false;
+    for (var q = 0; q < packets.length; q++) bytes += (packets[q].data ? packets[q].data.length : 0) + 4;
+    function alive() { return tok === sendSeq; }
+    function finish(ok, why) {
+      sending = false;
+      ackClose();
+      if (why) log(why, ok ? '#0a5f4f' : '#b4791f');
+      var secs = (performance.now() - t0) / 1000;
+      var box = $('xferRate');
+      if (box && bytes) {
+        box.textContent = '傳輸速率 ' + (secs > 0.2 ? (bytes / secs).toFixed(1) : 0) + ' B/s · ' + bytes + ' B / ' + secs.toFixed(1) + ' s';
+        box.className = 'chip on';
+      }
+      if (window.REC) REC.txDone(ok, bytes, secs, doneN);
+      if (onDone) onDone(ok);
+    }
+    function step() {
+      if (!alive()) return;
+      if (i >= packets.length) {
+        finish(true, '逐包確認完成：' + packets.length + ' 包全部收到回執');
+        return;
+      }
+      var b = band, pkt = Ultra.buildPacket(packets[i]);
+      var pktMs = Math.round(Ultra.packetSymbols(packets[i].data ? packets[i].data.length : chunkBytes) * symMs);
+      var wait = Math.max(2600, pktMs + 1200);
+      markTx(b, true);
+      onProgress && onProgress(i, packets.length, tries + 1);
+      log('第 ' + (i + 1) + '/' + packets.length + ' 包' + (tries ? '（重試 ' + tries + '/' + MAXT + '）' : '') +
+        ' · 播 ' + (pktMs / 1000).toFixed(1) + 's · 等回執 ' + (wait / 1000).toFixed(1) + 's');
+      var listen = function () {
+        if (!alive()) return;
+        /* 自己的播音刚结束，450ms 余响会把自己喇叭尾巴挡在外面，但也可能削掉回执的头一小段。
+         * 这里收到 180ms 就够（喇叭余响实际只有几十毫秒），让回执能被完整采到。 */
+        echoUntil = performance.now() + 180;
+        ackListen(wait, function (ack) {
+          if (!alive()) return;
+          var miss = ack && ack.total > 0 ? ack.missing() : null;
+          if (miss && miss.indexOf(i) < 0) {
+            doneN++;
+            i++; tries = 0;
+            log('第 ' + i + ' 包已確認（對方回 ' + (ack.total - miss.length) + '/' + ack.total + '）', '#0a5f4f');
+            setTimeout(step, 250);
+            return;
+          }
+          tries++;
+          var dg = ack && ack.diag;
+          log((miss ? '回執沒確認這一包（對方 ' + ack.total + ' 包中解出 ' + (ack.total - miss.length) + '）' : '這一包沒收到回執') +
+            (dg ? '｜對方 SNR +' + dg.level + ' dB · 同步 ' + dg.hits + '/8 · 邊距 ' + dg.margin + ' dB' : ''), '#b4791f');
+          if (tries >= MAXT) {
+            finish(false, '第 ' + (i + 1) + ' 包連 ' + MAXT + ' 次沒確認，已停（不再往後發）。檢查：對方在監聽、兩端「符號時長」同档、必要時一起調慢一档再試');
+            return;
+          }
+          setTimeout(step, 200);
+        });
+      };
+      /* 第一包和每次重試前都補一小段標尺（0.54s）：讓對端在「這一档速度」下重新量縮放。 */
+      if (tries > 0 || (i === 0 && !skipRuler)) {
+        tx.sendCal(pkt, b, symMs, 2, function () { setTimeout(listen, 150); });
+      } else {
+        tx.send(pkt, b, symMs, function () { setTimeout(listen, 150); });
+      }
+    }
+    /* 起跑前先做一次双向预检：链路完全不通时先别折腾 11 包，直接报原因。 */
+    if (!ackDead) {
+      preflight(6000, function (ok) {
+        if (!alive()) return;
+        skipRuler = true;                 // 预检刚播过标尺
+        if (!ok) {
+          finish(false, '預檢沒收到回執，已停止發送（對方沒在監聽／音量為 0／距離太遠）。要硬發請把「等回執」切成關');
+          return;
+        }
+        log('預檢完成，開始逐包傳輸（每包等回執才發下一包）');
+        try { step(); } catch (e) { log('發送鏈起跑失敗：' + (e && e.message ? e.message : e) + '（請把這行貼回）', '#c0392b'); }
+      });
+    } else {
+      log('回執麥克風不可用，改成盲發（沒有逐包確認）', '#b4791f');
+      queuePackets(packets, onProgress, function () { sending = false; markTxIdle(); if (onDone) onDone(false); });
+    }
+  }
+
   /* 盲发模式（不等回执）：A,B,C,A,B,C 逐轮铺，而不是每包连发 N 遍。
    * 单包越长越容易中途失步（32ms × 183 符号 ≈ 5.9 秒必然挂），逐轮铺能让每包单独成败、互不连累。 */
   function queuePackets(packets, onProgress, onDone) {
@@ -2058,7 +2151,7 @@ var App = (function () {
     if (sending) { log('上一次发送还没结束（点「立即硬停」可中断）', '#b4791f'); return; }
     sending = true;
     var wrap = function (ok) { sending = false; markTxIdle(); if (onDone) onDone(ok); };
-    if (waitAckOn) sendReliable(packets, onProgress, wrap);
+    if (waitAckOn) sendSteady(packets, onProgress, wrap);
     else queuePackets(packets, onProgress, function () { sending = false; markTxIdle(); if (onDone) onDone(); });
   }
 
@@ -2111,6 +2204,26 @@ var App = (function () {
       } else {
         markTx(null, false);
       }
+    },
+
+    /* 速度自由调节：改的是「符號時長」。慢一档抗噪/抗回聲更好，快一档吞吐更高。
+     * 兩端必須同档（解碼器按 symMs 建），所以這一行同時把「要通知對方一起改」寫進日誌。 */
+    speed: function (v) {
+      v = parseInt(v, 10) || 24;
+      if (v === symMs) return;
+      symMs = v;
+      Array.prototype.forEach.call(document.querySelectorAll('[data-sp]'), function (btn) {
+        btn.className = 'seg' + (parseInt(btn.dataset.sp, 10) === v ? ' on' : '');
+      });
+      var secs = (Ultra.packetSymbols(chunkBytes) * symMs / 1000).toFixed(1);
+      log('符號時長改成 ' + v + 'ms（每包約 ' + secs + 's）—— 對端也要改成同档，否則一定解不出', '#0a5f4f');
+      if (running) {                       // 解碼器按符號時長建，聽著的必須重建
+        this.stopRx();
+        setTimeout(function () { App.startRx(); }, 350);
+        return;
+      }
+      markTx(band);
+      if ($('chunkNote')) $('chunkNote').textContent = '每包 ' + chunkBytes + 'B · 約 ' + secs + 's/包';
     },
 
     chunk: function (v) {
