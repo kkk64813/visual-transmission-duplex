@@ -312,6 +312,11 @@
         <button class="seg on" data-wa="1" onclick="App.waitAck(true)" data-i18n="set.ackOn">等回執補包</button>
         <button class="seg" data-wa="0" onclick="App.waitAck(false)" data-i18n="set.ackOff">盲發</button>
       </div>
+      <h4 data-i18n="set.ackband">回執頻帶（人耳聽不到 → 20.5k）</h4>
+      <div class="row">
+        <button class="seg" data-ab="hi" onclick="App.ackBand('hi')">20.5k</button>
+        <button class="seg" data-ab="mid" onclick="App.ackBand('mid')">18.1k</button>
+      </div>
     </div>
   </div>
 </div>
@@ -334,7 +339,7 @@
 /* ================= 版本 / 語系 / 彈窗 / 紀錄 =================
  * 這一層獨立於 App 內核之外：只碰 DOM，不碰音頻。
  * 目的：畫面乾淨、按鈕少、紀錄能一鍵帶走。 */
-var VER = { v: 'v2026-11-26g', t: '2026-11-26 14:56' };
+var VER = { v: 'v2026-11-26h', t: '2026-11-26 15:02' };
 
 /* ---------- 彈窗 ---------- */
 var Dlg = {
@@ -579,6 +584,7 @@ var I18N = {
   'set.ack': ['可靠發送', 'Reliable send'],
   'set.ackOn': ['等回執補包', 'Wait for ACK'],
   'set.ackOff': ['盲發', 'Blind send'],
+  'set.ackband': ['回執頻帶（人耳聽不到 → 20.5k）', 'ACK band (inaudible → 20.5k)'],
   'manual.title': ['說明書', 'Guide'],
   'manual.h1': ['三步上手', 'Quick start'],
   'manual.p1': ['1. 接收端按「開始監聽」；2. 發送端輸入文字按「發送」；3. 手機上「同步」數字能到 7 或 8 就說明對齊了。',
@@ -593,8 +599,8 @@ var I18N = {
   'manual.p4': ['每次發送前會先播 1.07 秒標尺（300 ms 雙音定位 + 4 輪同步），收端據此量出頻率縮放；監聽中長時間沒解出會自己再量一次。量不準時寧可保留原值，不會亂改。',
     'Every send starts with a 1.07 s ruler (300 ms dual locator + 4 sync rounds); the receiver measures its frequency scale from it, and re-measures if nothing decodes for a while. A bad measurement is rejected rather than written.'],
   'manual.h5': ['回執與補包', 'ACK and repair'],
-  'manual.p5': ['接收端解出包後回一個位圖回執，發送端據此只補缺的包，回執走同一頻段。',
-    'The receiver returns a bitmap ACK after decoding; the sender re-sends only the missing packets. The ACK uses the same band.'],
+  'manual.p5': ['接收端解出包後回一個位圖回執，發送端據此只補缺的包。回執預設走 20.5k（人耳幾乎聽不到），資料走 18.1k；若發端收不到回執，到設定把回執頻帶切回 18.1k。按下「開始監聽」時那聲握手也是回執，同樣走 20.5k。',
+    'The receiver returns a bitmap ACK so the sender only re-sends missing packets. The ACK defaults to 20.5k (near-inaudible) while data stays on 18.1k; if the sender cannot hear the ACK, switch the ACK band back to 18.1k in Settings. The handshake emitted when you tap "Listen" is an ACK too, hence also 20.5k.'],
   'manual.h6': ['紀錄怎麼用', 'How to use the log'],
   'manual.p6': ['測試完按「完整紀錄」→「複製」，把整段貼回即可。紀錄含版本、設定、每個包的收發時間、同步命中數、邊距、頻率縮放、CRC、採樣率，以及一段自動判定。',
     'After a test, tap "Full log" then "Copy all" and paste it back. It contains version, settings, per-packet timing, sync hits, margins, frequency scale, CRC, sample rate, plus an automatic diagnosis.'],
@@ -638,7 +644,7 @@ var Lang = (function () {
 })();
 </script>
 
-<script src="ultra-core.js?v=20261126g"></script>
+<script src="ultra-core.js?v=20261126h"></script>
 <script>
 var App = (function () {
   /* ===== 单档单速（2026-11-25 起）=====
@@ -658,7 +664,7 @@ var App = (function () {
   var autoBand = false;
   var chunkBytes = 16;             // 每包载荷字节：实测真机单包 >2.5 秒几乎必挂，16B@24ms ≈1.7 秒最稳
   /* 回执同样走 18.1k + 24ms（和数据同一档，参数只留一套，少一个变量就少一处错）。 */
-  var ACK_BAND = ONE_BAND, ACK_SP = ONE_SP, ACK_COPIES = 2, ACK_EVERY_MS = 2400;
+  var ACK_BAND = 'hi', ACK_SP = ONE_SP, ACK_COPIES = 2, ACK_EVERY_MS = 2400;
   /* 只有一个档，所以发送端永远用它；peerIsPC / 自动轮流这些分档逻辑全部退役（保留变量避免旧调用报错）。 */
   var peerIsPC = false, ackDoneSent = 0;
   function allowedBands() { return [band]; }
@@ -817,8 +823,8 @@ var App = (function () {
   function ackMark() {
     ackSentN++;
     var el = document.getElementById('ackSent');
-    if (el) el.textContent = '回执：本机已发 ' + ackSentN + ' 次 · 18.1k / ' + ACK_SP + 'ms（最近 ' +
-      new Date().toTimeString().slice(0, 8) + '）';
+    if (el) el.textContent = '回执：本机已发 ' + ackSentN + ' 次 · ' + Ultra.bandByKey(ACK_BAND).name + ' / ' + ACK_SP +
+      'ms（最近 ' + new Date().toTimeString().slice(0, 8) + '）';
   }
 
   /* 接收端回执：只要还有缺包、链路开着，就每 2.2 秒回一次位图，直到收齐。
@@ -838,7 +844,7 @@ var App = (function () {
     if (!(e > Math.max(f * 8, 1e-6))) return;       // 只是噪声，不打扰对方
     zeroAckAt = now;
     var pkt = Ultra.buildPacket(Ultra.ackPayload(++ackRound, 0, function () { return false; }, rxDiag()));
-    log('没解出任何包，但仍回一条「听到了·解不出」· 18.1k/' + ACK_SP + 'ms', '#b4791f');
+    log('没解出任何包，但仍回一条「听到了·解不出」· ' + Ultra.bandByKey(ACK_BAND).name + '/' + ACK_SP + 'ms', '#b4791f');
     ackGainOn();
     ackMark();
     tx.send(pkt, Ultra.bandByKey(ACK_BAND), ACK_SP, function () { ackGainOff(); });
@@ -1583,8 +1589,19 @@ var App = (function () {
       tx.play(seg, function () {
         started = 1;
         clearTimeout(watchdog);
-        log('預檢②：等對方回執（' + Math.round((waitMs || 6000) / 1000) + ' 秒）…');
+        log('預檢②：開麥並再呼叫一次（我方麥克風這時才開，對方必須聽到「第二次」才會回執）…');
+        /* 這裡是上一版最關鍵的漏洞：標尺播的時候我方麥克風還關著，
+         * 對方聽到了、也回了一條零回執，但我方根本收不到；而我方開麥之後自己又不出聲，
+         * 對方就不會再回 —— 兩邊互相乾等（v-f 日誌「停在預檢②」的另一半原因）。
+         * 所以在開麥之後補一次短呼叫（0.6 秒，2 輪），強迫對方再回一條。 */
+        var call2 = setTimeout(function () {
+          try {
+            tx.play(Ultra.makeRuler(ctx.sampleRate, b, sp, 2, 300, dualOn()), function () {});
+            log('已播第二次呼叫（0.6s），等對方回執…');
+          } catch (e) { log('第二次呼叫播放失敗：' + (e && e.message ? e.message : e), '#b4791f'); }
+        }, 1200);
         ackListen(waitMs || 6000, function (ack) {
+        clearTimeout(call2);
         if (!ack) {
           rx.pre = '未通過（對方無回執）';
           log('預檢未通過：對方沒有任何回執 —— 手機沒在監聽、沒開自動回執、音量為 0 或距離太遠。' +
@@ -1816,6 +1833,18 @@ var App = (function () {
         b.className = 'seg' + (parseInt(b.dataset.wa, 10) === (on ? 1 : 0) ? ' on' : '');
       });
       log(on ? '可靠发送：开（发完开麦等对方回执，只补缺包）' : '盲发：每包轮发 ' + repeats + ' 遍，不等回执');
+    },
+
+    /* 回執頻帶：18.1k 人耳聽得到（按下「開始監聽」那聲握手就是它），20.5k 幾乎沒人聽得到。
+     * 20.5k 的代價是衰減大、電腦麥克風上限約 21.2k，最上面兩個音會掉——收不到回執就切回 18.1k。 */
+    ackBand: function (k) {
+      ACK_BAND = (k === 'mid') ? 'mid' : 'hi';
+      try { localStorage.setItem('vt-ackband', ACK_BAND); } catch (e) {}
+      Array.prototype.forEach.call(document.querySelectorAll('[data-ab]'), function (b) {
+        b.className = 'seg' + (b.dataset.ab === ACK_BAND ? ' on' : '');
+      });
+      log('回執頻帶切到 ' + Ultra.bandByKey(ACK_BAND).name +
+        (ACK_BAND === 'hi' ? '（人耳聽不到；若發端收不到回執，請切回 18.1k）' : '（聽得到，但相容性最好）'), '#0a5f4f');
     },
 
     ackReply: function (on) {
@@ -2288,6 +2317,11 @@ App.chunk(16);
     }
   } catch (e) {}
   App.buildUI();          // 频段按钮 + 能量条都由这一处统一生成，避免两套 UI 各写一遍
+  try {
+    var ab = localStorage.getItem('vt-ackband');
+    if (ab === 'mid' || ab === 'hi') App.ackBand(ab);
+    else App.ackBand('hi');
+  } catch (e) {}
   var f = document.getElementById('txt');
   f.addEventListener('input', function () {
     var n = f.value.length;
