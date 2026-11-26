@@ -108,19 +108,27 @@ var GAIN = 0.72;          // 默认标准音量：够响，又不至于让喇叭
   }
 
   /* 回执（反向信道）：接收端用位图告诉发送端「哪些包我已经收到了」。
-   * 载荷 = [T_ACK][round][total u8][nbytes][b0..b(n-1)]，nbytes 最多 16（可覆盖 128 包）。
-   * 反向链路更脆弱，所以只发位图、不发内容，尽量短。 */
+   * 载荷 = [T_ACK][round][total u8][nbytes][b0..b(n-1)][diagHits][diagMargin]
+   * 末两字节是「接收端自己的观测」：数据解码器最好的同步命中数、以及那次的行/列边距。
+   * 有了它，发端那一份日志就能同时说清「我发了什么」和「对方听到了什么」，不必再让对方
+   * 另贴一份日志。旧版本回执没有这两字节，parseAck 会自动当作没有。 */
   var T_ACK = 4, ACK_MAX = 128;
 
-  function ackPayload(round, total, have) {
+  function ackPayload(round, total, have, diag) {
     var n = Math.ceil(Math.min(total, ACK_MAX) / 8) || 1;
-    var b = new Uint8Array(4 + n);
+    var b = new Uint8Array(4 + n + (diag ? 2 : 0));
     b[0] = T_ACK;
     b[1] = round & 0xff;
     b[2] = total & 0xff;
     b[3] = n;
     for (var i = 0; i < total && i < ACK_MAX; i++) {
       if (have(i)) b[4 + (i >> 3)] |= (1 << (i & 7));
+    }
+    if (diag) {
+      var h = Math.max(0, Math.min(15, Math.round(+diag.hits || 0)));
+      var mg = Math.max(-16, Math.min(46, +diag.margin || 0));
+      b[4 + n] = h;
+      b[5 + n] = Math.round((mg + 16) / 2) & 0x1f;        // -16..+46 dB → 0..31，2 dB 一格
     }
     return b;
   }
@@ -132,10 +140,15 @@ var GAIN = 0.72;          // 默认标准音量：够响，又不至于让喇叭
     if (payload.length < 4 + n) return null;
     var bits = payload.subarray(4, 4 + n);
     function has(i) { return i < total && (i >> 3) < n && !!(bits[i >> 3] & (1 << (i & 7))); }
+    var diag = null;
+    if (payload.length >= 6 + n) {
+      diag = { hits: payload[4 + n] & 15, margin: (payload[5 + n] & 31) * 2 - 16 };
+    }
     return {
       round: payload[1],
       total: total,
       has: has,
+      diag: diag,
       missing: function () {
         var out = [];
         for (var i = 0; i < total; i++) if (!has(i)) out.push(i);
@@ -323,7 +336,12 @@ var GAIN = 0.72;          // 默认标准音量：够响，又不至于让喇叭
     return { b: b, v: bv, s: ss, sv: sv };
   }
 
-  /* 双音判决：行组 0..3 选最强、列组 4..7 选最强，两边都要「明显强于组内第二」才算数。 */
+  /* 双音判决：行组 0..3 选最强、列组 4..7 选最强，直接取 argmax 组合成符号。
+   * 【重要】早期版本要求「行、列最强都要 ≥ 组内第二 ×2.2」才算数，真机上这个门限
+   * 太硬：喇叭/麦克风对两条音的衰减差一点、房间里多一条反射尾巴，门限就挂，
+   * 同步头 8 个符号一个都凑不出（日志里「同步命中 0/8」的根因）。
+   * 现在改成分组 argmax：永远给出一个候选符号，靠「8 符号全对」和 CRC 兜错。
+   * 误判的代价被 CRC 挡住，而漏判的代价是整包收不到 —— 两害相权取 argmax。 */
   function classifyDual(x, off, len, sr, band, scale) {
     if (off < 0 || off + len > x.length) return -1;
     var m = new Float64Array(TONES), t;
@@ -333,9 +351,23 @@ var GAIN = 0.72;          // 默认标准音量：够响，又不至于让喇叭
     }
     var R = top2(m, 0, 3), C = top2(m, 4, 7);
     if (!(R.v > 0) || !(C.v > 0)) return -1;
-    if (R.v < R.sv * 2.2) return -1;
-    if (C.v < C.sv * 2.2) return -1;
     return R.b * 4 + (C.b - 4);
+  }
+
+  /* 只给诊断用：返回组合符号与行/列两个边距（dB），真实判决不看它 */
+  function dualMargin(x, off, len, sr, band, scale) {
+    if (off < 0 || off + len > x.length) return null;
+    var m = new Float64Array(TONES), t;
+    for (t = 0; t < TONES; t++) {
+      var v = goertzel(x, off, len, toneFreq(band, t, scale), sr);
+      m[t] = v >= 0 ? v : 0;
+    }
+    var R = top2(m, 0, 3), C = top2(m, 4, 7);
+    return {
+      sym: R.b * 4 + (C.b - 4),
+      mr: 20 * Math.log10((R.v + 1e-12) / (R.sv + 1e-12)),
+      mc: 20 * Math.log10((C.v + 1e-12) / (C.sv + 1e-12))
+    };
   }
 
   /* 双音 + 亚采样精修（跟 classifyBest 同一套「在 ±span 内找边距最大」的思想） */
@@ -1056,7 +1088,7 @@ var GAIN = 0.72;          // 默认标准音量：够响，又不至于让喇叭
     if (t === T_PROBE) return { type: 'probe' };
     if (t === T_ACK) {
       var a = parseAck(p);
-      if (a) return { type: 'ack', round: a.round, total: a.total, has: a.has, missing: a.missing };
+      if (a) return { type: 'ack', round: a.round, total: a.total, has: a.has, missing: a.missing, diag: a.diag };
       return null;
     }
     return null;
@@ -1151,7 +1183,7 @@ var GAIN = 0.72;          // 默认标准音量：够响，又不至于让喇叭
     bytesToSymbols: bytesToSymbols, symbolsToBytes: symbolsToBytes,
     bytesToSymbols2: bytesToSymbols2, symbolsToBytes2: symbolsToBytes2,
     packetSymbols2: packetSymbols2, SYNC2: SYNC2, pairTones: pairTones,
-    classifyDual: classifyDual, classifyDualBest: classifyDualBest,
+    classifyDual: classifyDual, classifyDualBest: classifyDualBest, dualMargin: dualMargin,
     setMode: setMode, getMode: getMode,
     makeWaveformDual: makeWaveformDual,
     packetSymbols: packetSymbols,

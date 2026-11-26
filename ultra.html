@@ -334,7 +334,7 @@
 /* ================= 版本 / 語系 / 彈窗 / 紀錄 =================
  * 這一層獨立於 App 內核之外：只碰 DOM，不碰音頻。
  * 目的：畫面乾淨、按鈕少、紀錄能一鍵帶走。 */
-var VER = { v: 'v2026-11-26b', t: '2026-11-26 08:57' };
+var VER = { v: 'v2026-11-26c', t: '2026-11-26 09:16' };
 
 /* ---------- 彈窗 ---------- */
 var Dlg = {
@@ -356,7 +356,7 @@ document.addEventListener('click', function (e) {
 /* ---------- 雙向紀錄 ---------- */
 window.REC = (function () {
   var lines = [], diags = [], snaps = [];
-  var rx = { pkts: 0, bytes: 0, first: 0, last: 0, maxHits: 0, crc: 0, err: 0, peak: [], scale: null };
+  var rx = { pkts: 0, bytes: 0, first: 0, last: 0, maxHits: 0, crc: 0, err: 0, peak: [], scale: null, peer: null };
   var tx = { done: 0, bytes: 0, secs: 0, ok: null, rounds: 0 };
   var T0 = new Date();
 
@@ -450,6 +450,7 @@ window.REC = (function () {
       var xs = rx.peak.slice(-60).sort(function (a, b) { return a - b; });
       out.push('RX 峰值頻率 中位=' + xs[Math.floor(xs.length / 2)] + 'Hz 區間=' + xs[0] + '–' + xs[xs.length - 1] + 'Hz');
     }
+    if (rx.peer) out.push('對方觀測（隨回執帶回）同步最好=' + rx.peer.hits + '/8 · 邊距=' + rx.peer.margin + ' dB');
     if (tx.done) out.push('TX 最後一次=' + (tx.ok ? '成功' : '未確認') + ' ' + tx.bytes + 'B /' + tx.secs.toFixed(1) + 's = ' +
       (tx.secs > 0 ? (tx.bytes / tx.secs).toFixed(1) : 0) + ' B/s · ' + tx.rounds + ' 輪');
 
@@ -472,6 +473,11 @@ window.REC = (function () {
     var med = xs.length ? xs[Math.floor(xs.length / 2)] : 0;
 
     if (n > 0) s.push('· 正向鏈路已打通（解出 ' + n + ' 個包），問題在補包/回執或個別包丟失。');
+    else if (rx.peer) {
+      if (rx.peer.hits === 0) s.push('· 對方回報同步命中 0/8：對方的資料解碼器連同步頭都沒形成候選 —— 對方幾乎聽不到這檔音，換更低一檔或加音量。');
+      else if (rx.peer.hits < 6) s.push('· 對方回報同步最好 ' + rx.peer.hits + '/8、邊距 ' + rx.peer.margin + ' dB：聽得到但對不齊，屬頻偏/時長偏差，看標尺有沒有真的放出來。');
+      else s.push('· 對方回報同步 ' + rx.peer.hits + '/8、邊距 ' + rx.peer.margin + ' dB：同步能對上，卡在資料段判決或 CRC。');
+    }
     else if (h >= 6) s.push('· 同步頭能命中 ' + h + '/8，但資料段一個都沒解出：多半是符號判決門檻太嚴、或喇叭削頂/多音互相干擾。');
     else if (h >= 1) s.push('· 同步只命中 ' + h + '/8（不足 6）：頻率縮放或符號時長對不上，先看「縮放」是否偏離 1.000 超過 1.5%。');
     else s.push('· 同步命中 0/8：收端完全沒形成候選。要嘛音量太小、要嘛峰值頻率與 18100 差太遠（喇叭/麥克風凹陷），要嘛雙音的某一路被吃掉。');
@@ -487,7 +493,7 @@ window.REC = (function () {
 
   function clear() {
     lines = []; diags = []; snaps = [];
-    rx = { pkts: 0, bytes: 0, first: 0, last: 0, maxHits: 0, crc: 0, err: 0, peak: [], scale: null };
+    rx = { pkts: 0, bytes: 0, first: 0, last: 0, maxHits: 0, crc: 0, err: 0, peak: [], scale: null, peer: null };
     tx = { done: 0, bytes: 0, secs: 0, ok: null, rounds: 0 };
     var a = document.getElementById('log'), b = document.getElementById('logTx');
     if (a) a.textContent = ''; if (b) b.textContent = '';
@@ -626,7 +632,7 @@ var Lang = (function () {
 })();
 </script>
 
-<script src="ultra-core.js?v=20261126b"></script>
+<script src="ultra-core.js?v=20261126c"></script>
 <script>
 var App = (function () {
   /* ===== 单档单速（2026-11-25 起）=====
@@ -761,6 +767,11 @@ var App = (function () {
   /* 每 8 块无条件全放行一次：门控只用来省 CPU，绝不作为「能不能解出」的唯一闸门。 */
   function gateBlind() { return (gateN % 8) === 0; }
 
+  /* 本机（收端）看到的最好的同步命中 —— 随回执带回去给发端，发端那份日志因此
+   * 同时包含「我发了什么」和「对方听到什么」，一个文件就能定位问题。 */
+  var rxBest = { hits: 0, margin: 0 };
+  function rxDiag() { return { hits: rxBest.hits, margin: rxBest.margin }; }
+
   /* ---------- 接收 ---------- */
   function makeDecoders(sr) {
     decoders = [];
@@ -769,7 +780,13 @@ var App = (function () {
     var d = new Ultra.StreamDecoder(sr, b, sp, dualOn());
     d.onPacket = function (payload) { onPacket(payload, b, sp); };
     d.onError = function (kind) {
-      if (kind === 'crc') { inc('stCrc'); } else { inc('stSync'); }
+      if (kind === 'crc') { inc('stCrc'); } else {
+        inc('stSync');
+        if (d.lastHits >= rxBest.hits) {
+          rxBest.hits = d.lastHits;
+          rxBest.margin = Math.round(d.lastMargin || 0);
+        }
+      }
     };
     d.onDiag = diagPush;
     decoders.push(d);
@@ -804,7 +821,7 @@ var App = (function () {
     var f = gateLatestE.floor || 0;
     if (!(e > Math.max(f * 8, 1e-6))) return;       // 只是噪声，不打扰对方
     zeroAckAt = now;
-    var pkt = Ultra.buildPacket(Ultra.ackPayload(++ackRound, 0, function () { return false; }));
+    var pkt = Ultra.buildPacket(Ultra.ackPayload(++ackRound, 0, function () { return false; }, rxDiag()));
     log('没解出任何包，但仍回一条「听到了·解不出」· 18.1k/' + ACK_SP + 'ms', '#b4791f');
     ackGainOn();
     ackMark();
@@ -821,7 +838,7 @@ var App = (function () {
       if (ackDoneSent) return;
       ackDoneSent = 1;
       var okPkt = Ultra.buildPacket(Ultra.ackPayload(++ackRound, textState.total,
-        function () { return true; }));
+        function () { return true; }, rxDiag()));
       var ob = Ultra.bandByKey(ACK_BAND), on = 0, oc = ACK_COPIES + 1;
       log('已收齐 ' + textState.total + '/' + textState.total + '：回一次「全部收到」· ' +
         ob.name + '/' + ACK_SP + 'ms ×' + oc, '#0a5f4f');
@@ -840,7 +857,7 @@ var App = (function () {
     lastAckAt = now;
     if (ackRound > 200) ackRound = 0;
     ackRound++;
-    var payload = Ultra.ackPayload(ackRound, textState.total, function (k) { return !!textState.parts[k]; });
+    var payload = Ultra.ackPayload(ackRound, textState.total, function (k) { return !!textState.parts[k]; }, rxDiag());
     var pkt = Ultra.buildPacket(payload);
     var b = Ultra.bandByKey(ACK_BAND), n = 0;
     log('回执 #' + ackRound + '：已收 ' + (textState.total - miss.length) + '/' + textState.total +
@@ -1430,7 +1447,7 @@ var App = (function () {
       var maxHits = 0;
       d.onPacket = function (p) {
         var pl = Ultra.parsePayload(p);
-        if (pl && pl.type === 'ack') ackGot = pl;
+        if (pl && pl.type === 'ack') { ackGot = pl; if (pl.diag) rx.peer = pl.diag; }
       };
       d.onError = function (kind) { if (kind === 'sync' && d.lastHits > maxHits) maxHits = d.lastHits; };
       ackDec = [d];
@@ -1548,7 +1565,11 @@ var App = (function () {
           if (!alive()) return;
           if (!ack) { log('没收到回执：这一轮当作全部失败，重发全部', '#b4791f'); round++; loop(); return; }
           if (ack.total === 0) {
-            log('对方回执「听到了、但一包都没解出」：数据链路没解出来。下一轮发送前会自动重播标尺重新校准', '#b4791f');
+            var dg = ack.diag;
+            log('对方回执「听到了、但一包都没解出」' +
+              (dg ? '｜對方觀測：同步最好 ' + dg.hits + '/8 · 邊距 ' + dg.margin + ' dB' : '') +
+              '：数据链路没解出来。' + (dg && dg.hits === 0 ? '对方连同步头都没对上，多半是音量不够或频率偏太多。' : ''),
+              '#b4791f');
             round++;
             loop();
             return;
