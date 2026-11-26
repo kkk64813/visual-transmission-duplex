@@ -6,7 +6,7 @@
  *   .u-modal.u-hide[id]                        // 彈窗本體，內容標 data-i18n
  *   UI.apply()                                 // 頁尾呼叫一次 */
 window.UI = (function () {
-  var VER = 'v2026-11-26o', T = '2026-11-26 16:20';
+  var VER = 'v2026-11-26p', T = '2026-11-26 16:40';
   var KEY = 'vt-lang';
   var D = {};
   var cur = 'zh';
