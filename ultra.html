@@ -214,12 +214,6 @@
         <button style="color:#c0392b" onclick="App.stopAll()">■ <span data-i18n="tx.halt">硬停</span></button>
         <button onclick="Dlg.open('dlgSet')">⚙</button>
       </div>
-      <div class="row" style="margin-top:8px" id="spdRow">
-        <span class="chip"><span data-i18n="tx.spd">符號時長</span></span>
-        <button class="seg on" data-sp="24" onclick="App.speed(24)">24ms</button>
-        <button class="seg" data-sp="36" onclick="App.speed(36)">36ms</button>
-        <button class="seg" data-sp="48" onclick="App.speed(48)">48ms</button>
-      </div>
       <div id="bandRow" class="hide"></div>
       <div class="hide" id="bandNote"></div>
     </div>
@@ -345,7 +339,7 @@
 /* ================= 版本 / 語系 / 彈窗 / 紀錄 =================
  * 這一層獨立於 App 內核之外：只碰 DOM，不碰音頻。
  * 目的：畫面乾淨、按鈕少、紀錄能一鍵帶走。 */
-var VER = { v: 'v2026-11-26z', t: '2026-11-26 17:35' };
+var VER = { v: 'v2026-11-26z2', t: '2026-11-26 17:45' };
 
 /* ---------- 彈窗 ---------- */
 var Dlg = {
@@ -658,7 +652,7 @@ var Lang = (function () {
 })();
 </script>
 
-<script src="ultra-core.js?v=20261126z"></script>
+<script src="ultra-core.js?v=20261126z2"></script>
 <script>
 var App = (function () {
   /* ===== 单档单速（2026-11-25 起）=====
@@ -691,6 +685,8 @@ var App = (function () {
   var ackDec = null, ackProc = null, ackSrc = null, ackMic = null, ackBusy = false, ackDead = false;
   var loopTimer = null, loopN = 0, loopOn = false; // 循环发校准包
   var symMs = ONE_SP, repeats = 2;
+  /* 自动速度：rxSpUsed＝本端最近一次成功解出用的符號時長（写进回执指纹）；spHint＝上一轮学到的「该从哪一档起步」。 */
+  var rxSpUsed = ONE_SP, spHint = ONE_SP;
   var ctx = null, tx = null;
   var micStream = null, proc = null;
   var decoders = [];               // 3 band × 2 speed
@@ -821,13 +817,17 @@ var App = (function () {
   function peerFlags() {
     var bi = 0;
     for (var i = 0; i < Ultra.BANDS.length; i++) if (Ultra.BANDS[i].key === band.key) bi = i;
-    return ((dualOn() ? 1 : 0) | ((bi & 3) << 1)) & 0xff;
+    /* 位 3–4：我这一端「最近一次成功解出」用的符號時長（0=24ms，1=36ms，2=48ms）。
+     * 发端据此知道对方实际是靠哪一档在收，日志就能从「同步 0/8」变成一句人话。 */
+    var spi = rxSpUsed >= 44 ? 2 : (rxSpUsed >= 30 ? 1 : 0);
+    return ((dualOn() ? 1 : 0) | ((bi & 3) << 1) | ((spi & 3) << 3)) & 0xff;
   }
   function peerDesc(f) {
     if (f == null) return '未帶指紋（舊頁面）';
     var m = (f & 1) ? '雙音' : '單音';
     var b = Ultra.BANDS[(f >> 1) & 3];
-    return m + ' · ' + (b ? b.name : '?');
+    var spi = (f >> 3) & 3, sp = [24, 36, 48][spi] || '?';
+    return m + ' · ' + (b ? b.name : '?') + ' · ' + sp + 'ms';
   }
   function peerMismatch(f) {
     if (f == null) return '';
@@ -840,25 +840,29 @@ var App = (function () {
   /* ---------- 接收 ---------- */
   function makeDecoders(sr) {
     decoders = [];
-    /* 只开一个：18.1k + 当前符号时长。原来 3 档 × 3 速度 = 9 个解码器是手机卡死/掉样的总根源。 */
-    var b = Ultra.bandByKey(ONE_BAND), sp = symMs;
-    var d = new Ultra.StreamDecoder(sr, b, sp, dualOn());
-    /* 本工具的包最长 16B（设定里最大也就几十字节）。把上限压到 64：
-     * 回声里凑巧对齐的假位置常把长度字段解成 130~150 字节，按 200 字节放行会让
-     * 解码器在那里死等 7 秒、把后面的真包全挡住（日志里 needLen=136 刷屏就是这么来的）。 */
-    d.maxPayload = 64;
-    d.onPacket = function (payload) { onPacket(payload, b, sp); };
-    d.onError = function (kind) {
-      if (kind === 'crc') { inc('stCrc'); } else {
+    /* 同一档 18.1k 上常驻两个速度：24ms（快）与 48ms（稳）。
+     * 发端会在链路不稳时自己降到 48ms，收端必须两档都听着才能接住 —— 用户不需要设任何东西。
+     * （曾经 3 档 × 3 速度 = 9 个解码器是手机卡死的根源；两个在真机上跑得动。） */
+    var b = Ultra.bandByKey(ONE_BAND);
+    [24, 48].forEach(function (sp) {
+      var d = new Ultra.StreamDecoder(sr, b, sp, dualOn());
+      /* 本工具的包最长 16B（设定里最大也就几十字节）。把上限压到 64：
+       * 回声里凑巧对齐的假位置常把长度字段解成 130~150 字节，按 200 字节放行会让
+       * 解码器在那里死等 7 秒、把后面的真包全挡住（日志里 needLen=136 刷屏就是这么来的）。 */
+      d.maxPayload = 64;
+      d.onPacket = function (payload) { onPacket(payload, b, sp); };
+      d.onError = function (kind) {
+        if (d.lastHits < 4) return;      // 两档同时跑：命中低的那档别把统计刷爆
+        if (kind === 'crc') { inc('stCrc'); return; }
         inc('stSync');
         if (d.lastHits >= rxBest.hits) {
           rxBest.hits = d.lastHits;
           rxBest.margin = Math.round(d.lastMargin || 0);
         }
-      }
-    };
-    d.onDiag = diagPush;
-    decoders.push(d);
+      };
+      d.onDiag = diagPush;
+      decoders.push(d);
+    });
   }
 
   /* 回执故意用比用户设定更高的音量：手机一开麦，安卓常把播放路由到听筒，实际很小声，
@@ -1179,8 +1183,16 @@ var App = (function () {
     return head.concat(diagLines).join('\n') + '\n';
   }
 
+  /* 24ms 与 48ms 两个解码器都会「看见」同一个包：按「包头 4 字节 + 时间窗」去重，
+   * 否则同一个包会被算两次（收樣統計、回执次数都会翻倍）。真的重传间隔 ≥ 4 秒，不会被误杀。 */
+  var lastPkKey = '', lastPkAt = 0;
   function onPacket(payload, b, sp) {
+    var key = payload && payload.length >= 4 ? (payload[0] + ':' + payload[1] + ':' + payload[2] + ':' + payload[3]) : '';
+    var nwt = performance.now();
+    if (key && key === lastPkKey && nwt - lastPkAt < 1500) return;
+    lastPkKey = key; lastPkAt = nwt;
     inc('stPk');
+    if (sp) rxSpUsed = sp;               // 记下「对方是靠哪一档速度发过来的」，回执里会带上
     if (window.REC) REC.pkt(payload, b ? b.key : '-', sp);
     if (b && b.key) ackBandKey = b.key;      // 回执跟着「最后成功解出的那一档」走
     var p = Ultra.parsePayload(payload);
@@ -2036,19 +2048,30 @@ var App = (function () {
     } else loop();
   }
 
-  /* ---------- 逐包確認（stop-and-wait）----------
+  /* ---------- 逐包確認（stop-and-wait）+ 自动变速 ----------
    * 上一包没有回执确认，就绝不发下一包：先把「这一条链路、在这一档速度下确实通」钉死，
    * 通一包才放下一包。比「整批铺 6 遍」慢，但不会在对方压根没收到时空烧带宽。
-   * 每包最多重试 4 次，重试前补一段标尺让对端重新量缩放；4 次都不过就停，
-   * 并在日志里写清楚「先把两端符号时长一起调慢」这种可以照着做的动作。 */
+   * 速度由系统自己判断：先在 24ms（快）发；同一包第一次没被确认，就自动降到 48ms（稳）重试，
+   * 之后这一轮都用 48ms；整轮没降过速就把 24ms 记成下一轮的起点。用户不需要碰任何开关。
+   * 每包最多 4 次（1 次 24ms + 3 次 48ms），重试前补一段标尺让对端重新量缩放。 */
   function sendSteady(packets, onProgress, onDone) {
     var tok = ++sendSeq;
     var t0 = performance.now(), bytes = 0, i = 0, tries = 0, MAXT = 4, doneN = 0, skipRuler = false;
+    var curSp = (spHint >= 48 ? 48 : 24), slowed = (spHint >= 48);
     for (var q = 0; q < packets.length; q++) bytes += (packets[q].data ? packets[q].data.length : 0) + 4;
     function alive() { return tok === sendSeq; }
+    function setSp(v) {
+      if (v === curSp) return;
+      curSp = v; symMs = v;
+      log('鏈路不穩：符號時長自動放慢到 ' + v + 'ms（收端兩檔都在聽，不用你去設）', '#b4791f');
+      markTx(band, true);
+    }
     function finish(ok, why) {
       sending = false;
       ackClose();
+      symMs = curSp;
+      /* 学到的东西留给下一轮：降过速就一直用慢档起步；全程没降速就继续 24ms 快档。 */
+      spHint = slowed ? 48 : 24;
       if (why) log(why, ok ? '#0a5f4f' : '#b4791f');
       var secs = (performance.now() - t0) / 1000;
       var box = $('xferRate');
@@ -2062,16 +2085,16 @@ var App = (function () {
     function step() {
       if (!alive()) return;
       if (i >= packets.length) {
-        finish(true, '逐包確認完成：' + packets.length + ' 包全部收到回執');
+        finish(true, '逐包確認完成：' + packets.length + ' 包全部收到回執' + (slowed ? '（全程用 ' + curSp + 'ms）' : '（全程 24ms）'));
         return;
       }
       var b = band, pkt = Ultra.buildPacket(packets[i]);
-      var pktMs = Math.round(Ultra.packetSymbols(packets[i].data ? packets[i].data.length : chunkBytes) * symMs);
+      var pktMs = Math.round(Ultra.packetSymbols(packets[i].data ? packets[i].data.length : chunkBytes) * curSp);
       var wait = Math.max(2600, pktMs + 1200);
       markTx(b, true);
       onProgress && onProgress(i, packets.length, tries + 1);
       log('第 ' + (i + 1) + '/' + packets.length + ' 包' + (tries ? '（重試 ' + tries + '/' + MAXT + '）' : '') +
-        ' · 播 ' + (pktMs / 1000).toFixed(1) + 's · 等回執 ' + (wait / 1000).toFixed(1) + 's');
+        ' · ' + curSp + 'ms · 播 ' + (pktMs / 1000).toFixed(1) + 's · 等回執 ' + (wait / 1000).toFixed(1) + 's');
       var listen = function () {
         if (!alive()) return;
         /* 自己的播音刚结束，450ms 余响会把自己喇叭尾巴挡在外面，但也可能削掉回执的头一小段。
@@ -2090,19 +2113,23 @@ var App = (function () {
           tries++;
           var dg = ack && ack.diag;
           log((miss ? '回執沒確認這一包（對方 ' + ack.total + ' 包中解出 ' + (ack.total - miss.length) + '）' : '這一包沒收到回執') +
-            (dg ? '｜對方 SNR +' + dg.level + ' dB · 同步 ' + dg.hits + '/8 · 邊距 ' + dg.margin + ' dB' : ''), '#b4791f');
+            (dg ? '｜對方 SNR +' + dg.level + ' dB · 同步 ' + dg.hits + '/8 · 邊距 ' + dg.margin + ' dB' +
+              (dg.flags != null ? ' · 對方以 ' + peerDesc(dg.flags) : '') : ''), '#b4791f');
           if (tries >= MAXT) {
-            finish(false, '第 ' + (i + 1) + ' 包連 ' + MAXT + ' 次沒確認，已停（不再往後發）。檢查：對方在監聽、兩端「符號時長」同档、必要時一起調慢一档再試');
+            finish(false, '第 ' + (i + 1) + ' 包連 ' + MAXT + ' 次沒確認，已停（不再往後發）。' +
+              (slowed ? '24ms 和 48ms 都試過了：' : '') + '先確認對方在監聽、音量不是 0、距離別太遠');
             return;
           }
+          /* 智能调速：同一包第一次沒被確認，就自動降一档（24→48）再重試，而不是傻等同一速度。 */
+          if (!slowed && tries >= 1) { slowed = true; setSp(48); }
           setTimeout(step, 200);
         });
       };
       /* 第一包和每次重試前都補一小段標尺（0.54s）：讓對端在「這一档速度」下重新量縮放。 */
       if (tries > 0 || (i === 0 && !skipRuler)) {
-        tx.sendCal(pkt, b, symMs, 2, function () { setTimeout(listen, 150); });
+        tx.sendCal(pkt, b, curSp, 2, function () { setTimeout(listen, 150); });
       } else {
-        tx.send(pkt, b, symMs, function () { setTimeout(listen, 150); });
+        tx.send(pkt, b, curSp, function () { setTimeout(listen, 150); });
       }
     }
     /* 起跑前先做一次双向预检：链路完全不通时先别折腾 11 包，直接报原因。 */
@@ -2204,26 +2231,6 @@ var App = (function () {
       } else {
         markTx(null, false);
       }
-    },
-
-    /* 速度自由调节：改的是「符號時長」。慢一档抗噪/抗回聲更好，快一档吞吐更高。
-     * 兩端必須同档（解碼器按 symMs 建），所以這一行同時把「要通知對方一起改」寫進日誌。 */
-    speed: function (v) {
-      v = parseInt(v, 10) || 24;
-      if (v === symMs) return;
-      symMs = v;
-      Array.prototype.forEach.call(document.querySelectorAll('[data-sp]'), function (btn) {
-        btn.className = 'seg' + (parseInt(btn.dataset.sp, 10) === v ? ' on' : '');
-      });
-      var secs = (Ultra.packetSymbols(chunkBytes) * symMs / 1000).toFixed(1);
-      log('符號時長改成 ' + v + 'ms（每包約 ' + secs + 's）—— 對端也要改成同档，否則一定解不出', '#0a5f4f');
-      if (running) {                       // 解碼器按符號時長建，聽著的必須重建
-        this.stopRx();
-        setTimeout(function () { App.startRx(); }, 350);
-        return;
-      }
-      markTx(band);
-      if ($('chunkNote')) $('chunkNote').textContent = '每包 ' + chunkBytes + 'B · 約 ' + secs + 's/包';
     },
 
     chunk: function (v) {
