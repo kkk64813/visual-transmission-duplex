@@ -339,7 +339,7 @@
 /* ================= 版本 / 語系 / 彈窗 / 紀錄 =================
  * 這一層獨立於 App 內核之外：只碰 DOM，不碰音頻。
  * 目的：畫面乾淨、按鈕少、紀錄能一鍵帶走。 */
-var VER = { v: 'v2026-11-26w', t: '2026-11-26 18:40' };
+var VER = { v: 'v2026-11-26x', t: '2026-11-26 19:00' };
 
 /* ---------- 彈窗 ---------- */
 var Dlg = {
@@ -457,7 +457,7 @@ window.REC = (function () {
       var xs = rx.peak.slice(-60).sort(function (a, b) { return a - b; });
       out.push('RX 峰值頻率 中位=' + xs[Math.floor(xs.length / 2)] + 'Hz 區間=' + xs[0] + '–' + xs[xs.length - 1] + 'Hz');
     }
-    out.push('對方在線=' + (rx.online ? '是（收到就緒握手）' : '否（沒收到就緒握手）'));
+    out.push('對方在線=' + (rx.online ? '是（收到回執）' : '否（這段沒收到任何回執）'));
     if (rx.peer) out.push('對方觀測（隨回執帶回）同步最好=' + rx.peer.hits + '/8 · 邊距=' + rx.peer.margin + ' dB · 對方聽到的 SNR=' + rx.peer.level + ' dB');
     out.push('雙向預檢=' + (rx.pre || '未做'));
     if (tx.done) out.push('TX 最後一次=' + (tx.ok ? '成功' : '未確認') + ' ' + tx.bytes + 'B /' + tx.secs.toFixed(1) + 's = ' +
@@ -483,7 +483,7 @@ window.REC = (function () {
     var xs = rx.peak.slice(-60).sort(function (a, b) { return a - b; });
     var med = xs.length ? xs[Math.floor(xs.length / 2)] : 0;
 
-    if (!rx.online) s.push('· 沒收到對方的「就緒握手」：手機沒在監聽（要按開始監聽），或頁面在後台被系統凍結、手機音量為 0。先解決這一步，其餘都不用看。');
+    if (!rx.online) s.push('· 這段沒收到任何回執：對方沒在監聽（要按開始監聽）、頁面在後台被凍結、音量為 0，或發端根本還沒開麥等回執。先解決這一步，其餘都不用看。');
     if (n > 0) s.push('· 正向鏈路已打通（解出 ' + n + ' 個包），問題在補包/回執或個別包丟失。');
     else if (rx.peer) {
       if (rx.peer.hits === 0) s.push('· 對方回報同步命中 0/8：對方的資料解碼器連同步頭都沒形成候選 —— 對方幾乎聽不到這檔音，換更低一檔或加音量。');
@@ -652,7 +652,7 @@ var Lang = (function () {
 })();
 </script>
 
-<script src="ultra-core.js?v=20261126w"></script>
+<script src="ultra-core.js?v=20261126x"></script>
 <script>
 var App = (function () {
   /* ===== 单档单速（2026-11-25 起）=====
@@ -696,8 +696,8 @@ var App = (function () {
   var bufForMeter = new Float32Array(0);
 
   /* ---------- 自家回声排除 ----------
-   * 手机按「开始监听」会先播一条「就緒握手」回執（18.1k / 1.2 秒），喇叭就在麦克风旁边，
-   * 自己那只麦立刻把它收回来：条子瞬间顶满、还想去校准、甚至当成对端发的包。
+   * 手机监听时会自动回执（听到能量后回一句「聽到了·解不出」、解出包后回位图），
+   * 喇叭就在麦克风旁边，自己那只麦立刻把它收回来：条子瞬间顶满、还想去校准、甚至当成对端发的包。
    * 只要本机在播音（以及播完后的一小段余响），麦克风这一段一律不进解码器，
    * 也不进音量条 —— 播音时条子由 outPeakOnce 按播出电平画，两件事分开。 */
   var echoUntil = 0, lastEchoLog = 0;
@@ -1730,7 +1730,7 @@ var App = (function () {
           if (pl && pl.type === 'ack') {
             if (!ackGot) ackBandSeen = bb.name;
             ackGot = pl;
-            if (pl.round === 255) rx.online = 1;
+            rx.online = 1;          // 收到任何一條回執都證明「對方在聽」，不必再等 255 記號
             if (pl.diag) rx.peer = pl.diag;
             ackBandUsed = bb.name;
             return;
@@ -2458,16 +2458,11 @@ var App = (function () {
         setState('监听中', true);
         log('开始监听 · ' + ctx.sampleRate + ' Hz · ' + decoders.length + ' 个解码器（按能量门控只跑有声音的那档）');
         if (ctx.sampleRate < 48000) log('注意：设备只给到 ' + ctx.sampleRate + ' Hz，20.5k 档接近奈奎斯特，可能解不出，建议用 18.1k 档', '#b4791f');
-        /* 上線握手：開麥成功後放一次「我在聽」的短回執（round=255 標記）。
-         * 發端日誌因此能直接看出「對方根本沒在聽」還是「在聽但聽不到」——
-         * 上一版這兩種情況在日誌裡長得完全一樣，白白浪費一輪測試。 */
-        setTimeout(function () {
-          if (!running || !tx || !ctx || !ackReplyOn) return;
-          var pkt = Ultra.buildPacket(Ultra.ackPayload(255, 0, function () { return false; }, rxDiag()));
-          ackGainOn();
-          ackMark();
-          tx.send(pkt, Ultra.bandByKey(ACK_BAND), ACK_SP, function () { ackGainOff(); log('已發上線握手（對方日誌會顯示「對方已上線」）', '#0a5f4f'); });
-        }, 350);
+        /* 不要在上線時主動播「就緒握手」了。
+         * 那個時刻發端還沒開麥（它的麥是在「開始發送」時才開的），根本聽不到這條握手；
+         * 唯一聽到的就是本機自己的麥 —— 白放 1.2 秒超聲給自己收，使用者還會聽到一點雜音。
+         * 「我在聽」改由 maybeZeroAck 在真的聽到超聲能量時自動回一句，
+         * 那時發端正在等回執，才有意義。 */
       }).catch(function (e) {
         rxPending = false;
         log('麦克风打不开：' + (e && e.message ? e.message : e), '#c0392b');
