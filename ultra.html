@@ -339,7 +339,7 @@
 /* ================= 版本 / 語系 / 彈窗 / 紀錄 =================
  * 這一層獨立於 App 內核之外：只碰 DOM，不碰音頻。
  * 目的：畫面乾淨、按鈕少、紀錄能一鍵帶走。 */
-var VER = { v: 'v2026-11-26p', t: '2026-11-26 16:40' };
+var VER = { v: 'v2026-11-26q', t: '2026-11-26 16:55' };
 
 /* ---------- 彈窗 ---------- */
 var Dlg = {
@@ -649,7 +649,7 @@ var Lang = (function () {
 })();
 </script>
 
-<script src="ultra-core.js?v=20261126p"></script>
+<script src="ultra-core.js?v=20261126q"></script>
 <script>
 var App = (function () {
   /* ===== 单档单速（2026-11-25 起）=====
@@ -1234,13 +1234,16 @@ var App = (function () {
      * 天生对齐，8 格取平均之后噪声起伏只剩 3 dB 上下；真有一对音在响时就是 +35 dB 起。
      * 这样 18.1k / 20.5k / 22.3k 三档哪一档有声音，条子都会动，安静时又不会乱跳。 */
     var scan = Ultra.bandScan(slice, sr, HF_LO, HF_HI, 100);
-    var map = {};
-    for (var i = 0; i < scan.length; i++) map[scan[i].f] = scan[i].v;
+    var map = {}, peakAll = 0, i;
+    for (i = 0; i < scan.length; i++) { map[scan[i].f] = scan[i].v; if (scan[i].v > peakAll) peakAll = scan[i].v; }
+    /* 麦克风被系统静音/页面被冻结时，采集缓冲会是整段 0：这时候任何比值都是「0/0」的
+     * 数字噪声，几条音格的残值一比音间格就冒出十几二十 dB。先按绝对电平挡住。 */
+    if (peakAll < 1e-9 || (typeof window.tx === 'object' && window.tx && window.tx.busy)) { lastScan = { f: 0, v: 0, db: -99 }; paintBar(-99); return; }
     var best = -99, bestF = 0, bestV = 0;
     var bands = Ultra.BANDS || [];
     for (var bi = 0; bi < bands.length; bi++) {
       var b = bands[bi], df = b.df || 200, st = 0, si = 0, nt = 0, ni = 0, k, v;
-      var topF = 0, topV = 0;
+      var topF = 0, topV = 0, strong = 0;
       for (k = 0; k < 8; k++) {
         v = map[b.f0 + k * df];
         if (v == null) continue;
@@ -1249,13 +1252,24 @@ var App = (function () {
         if (k < 7) { v = map[b.f0 + k * df + df / 2]; if (v != null) { si += v; ni++; } }
       }
       if (nt < 8 || ni < 7) continue;
-      var d = 20 * Math.log10((st / nt + 1e-12) / (si / ni + 1e-12));
+      var mean = si / ni + 1e-12;
+      for (k = 0; k < 8; k++) {
+        v = map[b.f0 + k * df];
+        if (v != null && 20 * Math.log10((v + 1e-12) / mean) >= 12) strong++;   // 真正在响的音有多少条
+      }
+      var d = 20 * Math.log10((st / nt + 1e-12) / mean);
+      /* 一对音在响时，90ms 里能盖到 4–6 条音（双音每符号两条、符号 24ms）：
+       * 少于 3 条音的「抬升」只可能是噪声起伏或失真的旁瓣，不算信号。 */
+      if (strong < 2) d = -99;
       if (d > best) { best = d; bestF = topF; bestV = topV; }
     }
     lastScan = { f: bestF, v: bestV, db: best };
-    /* 纯噪声下这个比值最高也就 8–12 dB（8 格平均之后起伏很小），所以 8 dB 以内算 0，
-     * 8→24 dB 线性映射到 0→100%。 */
-    var tgt = best <= 8 ? 0 : Math.max(0, Math.min(100, Math.round((best - 8) / 16 * 100)));
+    paintBar(best);
+  }
+
+  function paintBar(best) {
+    /* 纯噪声下这个比值实测能到 12–14 dB，所以 14 dB 以内一律 0，14→30 dB 映射到 0→100%。 */
+    var tgt = best <= 14 ? 0 : Math.max(0, Math.min(100, Math.round((best - 14) / 16 * 100)));
     var prev = barLv.hf || 0;
     prev = tgt > prev ? tgt : prev * 0.72 + tgt * 0.28;   // 起得快、落得慢，肉眼才像「在抖」
     barLv.hf = prev; barDb.hf = best;
@@ -1486,7 +1500,7 @@ var App = (function () {
   function ensureCtx() {
     if (!ctx) {
       ctx = Ultra.makeCtx();
-      tx = new Ultra.Tx(ctx);
+      window.tx = new Ultra.Tx(ctx);
       try {
         outAnalyser = ctx.createAnalyser();
         outAnalyser.fftSize = 4096;
