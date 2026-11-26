@@ -4,7 +4,7 @@
  * 现在改成：先请求线上，成功后顺手更新缓存；断网才回落到缓存。
  * 路径统一用相对写法 './'，这样根域名和 GitHub Pages 子目录两种部署都能用。
  */
-var CACHE = 'cimbar-duplex-v7';
+var CACHE = 'cimbar-duplex-v8';
 var CORE = ['./', './index.html', './duplex.html', './recv.html', './ultra.html', './merge.html', './encoder.html', './ultra-core.js'];
 
 self.addEventListener('install', function (e) {

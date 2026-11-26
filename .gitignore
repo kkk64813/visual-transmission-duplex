@@ -5,3 +5,9 @@ _dom.html
 _t.html
 .chk*.js
 _db*.mjs
+_*.html
+_*.png
+_*.err
+_ui.js
+_patch.js
+_chk*.js

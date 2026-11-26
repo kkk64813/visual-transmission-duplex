@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>超声信道 · UltraLink</title>
+<title>超聲波通道 · UltraLink</title>
 <style>
   :root{
     --bg:#f5f7f6; --surface:#ffffff; --ink:#16211e; --muted:#6c7a75;
@@ -86,232 +86,547 @@
   details.card[open]>summary{border-bottom:1px solid var(--line);margin-bottom:12px}
   a{color:var(--accent);text-decoration:none}
   footer{color:var(--muted);font-size:12px;text-align:center;padding:0 16px 28px}
+  /* ---------------- 新版外觀 ---------------- */
+  .topbtn{display:inline-flex;align-items:center;gap:5px;padding:7px 10px;font-size:12px;border-radius:9px;
+    border:1px solid var(--line);background:#fff;color:var(--ink);font-weight:600;cursor:pointer;text-decoration:none}
+  .topbtn.home{border-color:var(--accent);color:var(--accent-2);background:#eef8f4}
+  .topbtn.home b{font-weight:700}
+  .chipline{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)}
+  .chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+  .chip{display:inline-flex;align-items:center;gap:4px;font-size:12px;color:var(--muted);
+    border:1px solid var(--line);background:#fbfdfc;border-radius:999px;padding:3px 10px;font-variant-numeric:tabular-nums}
+  .chip b{color:var(--ink);font-weight:700}
+  .chip.on{border-color:var(--accent);color:var(--accent-2);background:#eef8f4;font-weight:600}
+  .chip:empty{display:none}
+  .seg{padding:8px 13px;font-size:13px;border-radius:9px}
+  .seg.on{background:#e8f5f0;border-color:var(--accent);color:var(--accent-2)}
+  .big{padding:12px 20px;font-size:15px}
+  .card.slim{padding:10px 12px;display:flex;align-items:center;gap:10px}
+  .logline{flex:1;font-size:11.5px;color:var(--muted);font-family:ui-monospace,Menlo,Consolas,monospace;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .linkbtn{border:none;background:none;color:var(--accent-2);font-weight:600;font-size:12px;padding:4px 6px;cursor:pointer;white-space:nowrap}
+  .modal{position:fixed;left:0;top:0;right:0;bottom:0;background:rgba(12,22,19,.58);z-index:60;display:flex;align-items:flex-end;justify-content:center}
+  .sheet{background:#fff;width:100%;max-width:760px;max-height:88vh;border-radius:16px 16px 0 0;display:flex;flex-direction:column;box-shadow:0 -14px 50px rgba(0,0,0,.30);outline:1px solid var(--line)}
+  .sheetHead{display:flex;align-items:center;padding:14px 16px;border-bottom:1px solid var(--line)}
+  .sheetHead .x{margin-left:auto;border:none;background:none;font-size:18px;color:var(--muted);cursor:pointer;padding:2px 6px}
+  .sheetBody{padding:14px 16px 26px;overflow:auto}
+  .sheetBody h4{margin:16px 0 6px;font-size:13px;color:var(--accent-2);letter-spacing:.04em}
+  .sheetBody p{margin:0;font-size:13.5px;line-height:1.8;color:#33413c}
+  .sheetBody textarea{min-height:46vh;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11.5px;line-height:1.5}
+  main{padding-bottom:28px}
+  nav{max-width:760px;margin:0 auto;width:100%}
+  header{flex-wrap:wrap}
+  h3{text-transform:none;letter-spacing:.02em;color:var(--accent-2);font-size:13px}
+  .modal.hide{display:none!important}
 </style>
 </head>
 <body>
 
 <header>
   <div class="mark"></div>
-  <div class="brand">超声信道<small>UltraLink · 双音 18.1k · 24ms</small></div>
+  <div class="brand"><span data-i18n="app.name">超聲波通道</span><small data-i18n="app.sub">UltraLink · 雙音 18.1k · 24ms</small></div>
   <div class="grow"></div>
-  <div class="dot" id="dot"></div>
-  <span style="font-size:12px;color:var(--muted)" id="stateTxt">未启动</span>
+  <span class="chipline"><span class="dot" id="dot"></span><span id="stateTxt" data-i18n="app.idle">待機</span></span>
+  <button class="topbtn" id="btnLang" onclick="Lang.toggle()" title="Language">EN</button>
+  <button class="topbtn" id="btnHelp" onclick="Dlg.open('dlgManual')" data-i18n-title="nav.manual" title="說明書">?</button>
+  <a class="topbtn home" href="./index.html"><span>⌂</span><b data-i18n="nav.home">首頁</b></a>
 </header>
 
 <nav>
-  <div class="tab on" id="tabRx" onclick="App.role('rx')">接收端</div>
-  <div class="tab" id="tabTx" onclick="App.role('tx')">发送端</div>
+  <div class="tab on" id="tabRx" onclick="App.role('rx')">↓ <span data-i18n="tab.rx">接收</span></div>
+  <div class="tab" id="tabTx" onclick="App.role('tx')">↑ <span data-i18n="tab.tx">發送</span></div>
 </nav>
 
 <main>
-  <!-- 接收端 -->
+  <!-- 接收 -->
   <section id="panelRx">
     <div class="card">
       <div class="live">
-        <span class="hz" id="dPeak" style="font-size:22px;color:var(--muted)">待机</span>
-        <span class="unit">Hz</span>
-        <span class="tag">← 耳朵此刻听到的最强音</span>
+        <span class="hz" id="dPeak">—</span><span class="unit">Hz</span>
+      </div>
+      <div class="chips">
+        <span class="chip" id="rxNow" data-i18n="rx.quiet">安靜</span>
+        <span class="chip"><b id="rxHits">0</b>/8 <span data-i18n="rx.sync">同步</span></span>
+        <span class="chip"><b id="stPk">0</b> <span data-i18n="rx.pk">解出</span></span>
+        <span class="chip"><b id="stCrc">0</b> CRC</span>
+        <span class="chip"><b id="stSr">—</b></span>
+        <span class="chip" id="rxRate" data-i18n="rx.rate0">速率 —</span>
       </div>
       <div class="row" style="margin-top:12px">
-        <button class="primary" id="btnMic" onclick="App.startRx()">开始监听</button>
-        <button id="btnStop" onclick="App.stopRx()" disabled>停止</button>
-        <button class="pill" onclick="App.clearAll()">清空</button>
-        <span class="hint" id="rxNow" style="margin:0">待机</span>
+        <button class="primary big" id="btnMic" onclick="App.startRx()">▶ <span data-i18n="rx.start">開始監聽</span></button>
+        <button class="big" id="btnStop" onclick="App.stopRx()" disabled>■ <span data-i18n="rx.stop">停止</span></button>
+        <button id="btnClear" onclick="App.clearAll()">⨯ <span data-i18n="rx.clear">清空</span></button>
       </div>
       <div id="meters" style="margin-top:12px"></div>
-      <div class="stats">
-        <span>解出包 <b id="stPk">0</b></span>
-        <span>同步失配 <b id="stSync">0</b></span>
-        <span>CRC 失败 <b id="stCrc">0</b></span>
-        <span>采样 <b id="stSr">—</b></span>
-      </div>
-      <div class="hint">只有一个档：18.1k（18100–19500 Hz）。看这根条跳起来就说明这条链路活着。</div>
     </div>
 
     <div class="card">
-      <h3>收到的文字</h3>
-      <div class="row" style="margin-bottom:8px">
-        <span class="hint" style="margin:0;flex:none">回执</span>
-        <button class="pill on" data-ar="1" onclick="App.ackReply(true)">缺包自动回</button>
-        <button class="pill" data-ar="0" onclick="App.ackReply(false)">不回</button>
-        <button class="pill" onclick="App.loopAck(true)">自检：循环发回执</button>
-        <button class="pill" onclick="App.loopAck(false)">停</button>
-        <span class="hint" id="ackLoopCnt" style="margin:0">没在循环</span>
+      <h3 data-i18n="rx.text">收到的文字</h3>
+      <div class="out" id="outText">—</div>
+      <div class="row" style="margin-top:10px">
+        <span class="chip" id="ackSent"></span>
+        <div class="grow"></div>
+        <button class="seg on" data-ar="1" onclick="App.ackReply(true)" data-i18n="rx.ackAuto">自動回執</button>
+        <button class="seg" data-ar="0" onclick="App.ackReply(false)" data-i18n="rx.ackOff">不回執</button>
       </div>
-      <div class="hint" id="ackSent">回执：本机还没发过（发过会在这里显示次数与档位）</div>
-      <div class="out" id="outText">（空）</div>
       <div id="fileBox" class="hide" style="margin-top:10px">
-        <div class="hint" id="fileInfo"></div>
+        <div id="fileInfo" class="chip"></div>
         <div class="prog"><i id="fileProg"></i></div>
       </div>
     </div>
 
-    <details class="card">
-      <summary>自检 · 高级</summary>
-      <div class="body">
-        <div class="row">
-          <button class="primary" id="btnCal" onclick="App.autoCal()">立即重校（自动测量）</button>
-          <button id="btnCalStop" onclick="App.calStop()" disabled>停止</button>
-          <span class="hint" id="calStat" style="margin:0">每次发送前会自动校，不用按</span>
-        </div>
-        <div class="hint" style="margin-top:6px">让对方点「循环发校准包」，这边点上面的按钮：3 档频带 × 3 种符号长度挨个试，再把最能过的那组应用。</div>
-        <textarea id="calOut" class="out" readonly style="font-size:11px;line-height:1.5;height:150px;width:100%;overflow:auto;white-space:pre;resize:vertical;font-family:ui-monospace,Menlo,Consolas,monospace;margin-top:8px">（未校正）</textarea>
-        <div class="row" style="margin-top:6px">
-          <button class="pill" onclick="App.calSelect()">全选报告</button>
-          <button class="pill" onclick="App.calCopy()">复制报告</button>
-        </div>
-
-        <div class="dbg" style="margin-top:14px">
-          <div>采样率 <b id="dSr">—</b> · 麦克风原始 <b id="dMic">—</b></div>
-          <div>缓冲 <b id="dBuf">—</b> · 扫描位置 <b id="dScan">—</b></div>
-          <div>收样 <b id="dDrop">—</b> <span class="hint" style="margin:0">（低于 100% = CPU 跟不上，在丢样）</span></div>
-          <div>能量门控 <b id="dGate">—</b> <span class="hint" style="margin:0">（只让有声音的那档跑解码）</span></div>
-        </div>
-        <div id="dDec" class="dbg" style="margin-top:8px"></div>
-        <div class="row" style="margin-top:10px;align-items:center">
-          <span class="hint" style="margin:0;flex:none">频率校准</span>
-          <input type="range" id="rCal" min="-1" max="1" step="0.1" value="0" style="flex:1;accent-color:#0e7c66">
-          <span class="hint" id="vCal" style="margin:0;flex:none;width:64px;text-align:right">自动</span>
-          <button class="pill" onclick="App.calib(0)">自动</button>
-        </div>
-
-        <div class="row" style="margin-top:14px">
-          <button class="pill" onclick="App.diagSelect()">全选日志</button>
-          <button class="pill" onclick="App.diagCopy()">复制日志</button>
-          <button class="pill" onclick="App.diagClear()">清空</button>
-          <span class="hint" id="diagCnt" style="margin:0">0 行</span>
-        </div>
-        <textarea id="diagBox" class="out" readonly style="font-size:11px;line-height:1.5;height:170px;width:100%;overflow:auto;white-space:pre;resize:vertical;font-family:ui-monospace,Menlo,Consolas,monospace;margin-top:8px">（空）</textarea>
-      </div>
-    </details>
-
-    <div class="card">
-      <h3>日志</h3>
-      <div class="log" id="log"></div>
+    <div class="card slim">
+      <div class="logline" id="log"></div>
+      <button class="linkbtn" onclick="Dlg.open('dlgLog')" data-i18n="log.open">📋 完整紀錄</button>
     </div>
   </section>
 
-  <!-- 发送端 -->
+  <!-- 發送 -->
   <section id="panelTx" class="hide">
     <div class="card">
       <div class="live">
-        <span class="hz" id="sOut" style="font-size:22px;color:var(--muted)">静音</span>
-        <span class="unit">Hz</span>
-        <span class="tag" id="txTag">喇叭此刻在放</span>
+        <span class="hz" id="sOut" data-i18n="tx.silent">靜音</span><span class="unit">Hz</span>
       </div>
-      <div class="live" id="ackLive" style="margin-top:6px;display:none">
-        <span class="hz" id="ackSig" style="font-size:26px;color:var(--accent-2)">安静</span>
-        <span class="tag" id="ackSigTag">回执监听 · 信号强度</span>
+      <div class="chips">
+        <span class="chip" id="txTag">—</span>
+        <span class="chip" id="txRate">—</span>
+        <span class="chip" id="xferRate" data-i18n="tx.rate0">傳輸速率 —</span>      </div>
+      <div class="row" style="margin-top:10px" id="pingRow">
+        <span class="chip"><span data-i18n="tx.ping">單音 Ping</span></span>
+        <button class="seg" onclick="App.probe('mid')">18.1k</button>
+        <button class="seg" onclick="App.probe('hi')">20.5k</button>
+        <button class="seg" onclick="App.probe('top')">22.3k</button>
       </div>
-      <div class="row" style="margin-top:12px" id="bandRow"></div>
-      <div class="hint" id="bandNote"></div>
+      <div class="live" id="ackLive" style="margin-top:8px;display:none">
+        <span class="hz" id="ackSig" style="font-size:26px;color:var(--accent-2)">—</span>
+        <span class="tag" id="ackSigTag"></span>
+      </div>
       <div class="row" style="margin-top:10px">
-        <button class="pill" data-gn="0.35" onclick="App.gain(0.35)">音量 · 静默</button>
-        <button class="pill" data-gn="0.5" onclick="App.gain(0.5)">音量 · 轻</button>
-        <button class="pill on" data-gn="0.72" onclick="App.gain(0.72)">音量 · 标准</button>
-        <button class="pill" data-gn="0.9" onclick="App.gain(0.9)">音量 · 响</button>
+        <button class="seg" data-gn="0.35" onclick="App.gain(0.35)">🔈<span data-i18n="gain.quiet">靜</span></button>
+        <button class="seg" data-gn="0.5" onclick="App.gain(0.5)">🔈<span data-i18n="gain.low">輕</span></button>
+        <button class="seg on" data-gn="0.72" onclick="App.gain(0.72)">🔉<span data-i18n="gain.std">標準</span></button>
+        <button class="seg" data-gn="0.9" onclick="App.gain(0.9)">🔊<span data-i18n="gain.loud">響</span></button>
       </div>
       <div class="row" style="margin-top:8px">
-        <span class="hint" style="margin:0">调制</span>
-        <button class="pill on" id="mdDual" onclick="App.mode('dual')">双音 4bit（推荐）</button>
-        <button class="pill" id="mdSingle" onclick="App.mode('single')">单音 3bit</button>
+        <button class="seg on" id="mdDual" onclick="App.mode('dual')" data-i18n="mod.dual">雙音 4bit</button>
+        <button class="seg" id="mdSingle" onclick="App.mode('single')" data-i18n="mod.single">單音 3bit</button>
+        <div class="grow"></div>
+        <button style="color:#c0392b" onclick="App.stopAll()">■ <span data-i18n="tx.halt">硬停</span></button>
+        <button onclick="Dlg.open('dlgSet')">⚙</button>
       </div>
-      <div class="row" style="margin-top:8px">
-        <button onclick="App.stopAll()" style="color:#c0392b">■ 立即硬停</button>
-        <span class="hint" id="txRate" style="margin:0"></span>
-      </div>
+      <div id="bandRow" class="hide"></div>
+      <div class="hide" id="bandNote"></div>
     </div>
 
     <div class="card">
-      <h3>发文字</h3>
-      <textarea id="txt" placeholder="要送过去的文字，例如一串 Wi-Fi 密码、一句口令、一个地址"></textarea>
+      <h3 data-i18n="tx.text">發送文字</h3>
+      <textarea id="txt" data-i18n-ph="tx.ph" placeholder="輸入要傳送的內容（例如 Wi-Fi 密碼、口令）"></textarea>
       <div class="row" style="margin-top:10px">
-        <button class="primary" id="btnSend" onclick="App.sendText()">发送</button>
-        <span class="hint" id="txtInfo" style="margin:0"></span>
+        <button class="primary big" id="btnSend" onclick="App.sendText()">➤ <span data-i18n="tx.send">發送</span></button>
+        <span class="chip" id="txtInfo"></span>
       </div>
       <div class="prog"><i id="txtProg"></i></div>
     </div>
 
-    <details class="card">
-      <summary>发送设置（每包字节 / 回执）</summary>
-      <div class="body">
-        <div class="hint">频段与速度已固定：18.1k · 24ms（分档和变速都下线了，减少变量才能定位问题）。</div>
-        <div class="row" style="margin-top:10px">
-          <button class="pill" data-rp="2" onclick="App.repeat(2)">每包发 2 遍</button>
-          <button class="pill" data-rp="3" onclick="App.repeat(3)">3 遍</button>
-          <button class="pill on" data-rp="1" onclick="App.repeat(1)">1 遍</button>
-        </div>
-        <div class="row" style="margin-top:8px">
-          <span class="hint" style="margin:0;flex:none">每包字节</span>
-          <button class="pill" data-cb="8" onclick="App.chunk(8)">8</button>
-          <button class="pill" data-cb="12" onclick="App.chunk(12)">12</button>
-          <button class="pill on" data-cb="16" onclick="App.chunk(16)">16</button>
-          <button class="pill" data-cb="24" onclick="App.chunk(24)">24</button>
-          <button class="pill" data-cb="48" onclick="App.chunk(48)">48</button>
-        </div>
-        <div class="hint" id="chunkNote" style="margin-top:6px">默认 16 字节 ≈ 24ms 下 1.7 秒一包（实测真机 2.6 秒以上的单包几乎必挂）。</div>
-        <div class="row" style="margin-top:12px">
-          <span class="hint" style="margin:0;flex:none">可靠发送</span>
-          <button class="pill on" data-wa="1" onclick="App.waitAck(true)">等回执补包</button>
-          <button class="pill" data-wa="0" onclick="App.waitAck(false)">不等（盲发）</button>
-        </div>
-      </div>
-    </details>
-
-    <details class="card">
-      <summary>自检 · 高级</summary>
-      <div class="body">
-        <div class="row">
-          <button id="btnProbe" onclick="App.probe()">发探测音（1.2 秒）</button>
-          <button onclick="App.selfListen()">自听录音（2 秒）</button>
-          <button onclick="App.calibrate()">先发校准（3 短包）</button>
-        </div>
-        <div class="hint" style="margin-top:6px">探测音先确认这条频带能不能过；自听录音会把「可听带 / 超声带」两个 dB 数报出来。</div>
-        <div class="row" style="margin-top:10px">
-          <button class="pill" onclick="App.testMic()">测回执麦克风</button>
-          <button class="pill" onclick="App.testAck()">回执自检（听 8 秒）</button>
-        </div>
-        <div class="row" style="margin-top:10px">
-          <button id="btnLoop" onclick="App.loopCal()">循环发校准包</button>
-          <span class="hint" id="loopCnt" style="margin:0">点一次开始，再点一次停</span>
-        </div>
-        <div class="dbg" style="margin-top:12px">
-          <div>本机采样率 <b id="sSr">—</b></div>
-        </div>
-        <div class="row" style="margin-top:12px">
-          <button onclick="App.quietPreset()">一键「静音优先」</button>
-          
-        </div>
-        <div class="hint">人耳听到的那点声音，多是喇叭把超声“检波”出来的：幅度降一半，失真降到四分之一。想安静先降音量，再降速度，别先换频段。</div>
-      </div>
-    </details>
-
-    <details class="card">
-      <summary>发小文件（≤ 8 KB）</summary>
-      <div class="body">
-        <div class="row">
-          <input type="file" id="file" onchange="App.pickFile(this)">
-          <button class="primary" id="btnSendFile" onclick="App.sendFile()" disabled>发送文件</button>
-        </div>
-        <div class="hint" id="fileSendInfo">8 KB 大约需要 6–8 分钟，中途别切后台。</div>
-        <div class="prog"><i id="fileSendProg"></i></div>
-      </div>
-    </details>
-
     <div class="card">
-      <h3>日志</h3>
-      <div class="log" id="logTx"></div>
+      <h3 data-i18n="tx.file">發送檔案</h3>
+      <div class="row">
+        <input type="file" id="file" onchange="App.pickFile(this)">
+        <button class="primary" id="btnSendFile" onclick="App.sendFile()" disabled>➤ <span data-i18n="tx.send">發送</span></button>
+      </div>
+      <div class="chip" id="fileSendInfo" style="margin-top:8px">—</div>
+      <div class="prog"><i id="fileSendProg"></i></div>
+    </div>
+
+    <div class="card slim">
+      <div class="logline" id="logTx"></div>
+      <button class="linkbtn" onclick="Dlg.open('dlgLog')" data-i18n="log.open">📋 完整紀錄</button>
     </div>
   </section>
 </main>
 
-
 <footer>
-  纯本地：声音只在空气里走，不经过网络。 版本 v2026-11-25w（双音 4+4 · 4bit/符号 · 定位音自校 · 屏上同步命中）返回 <a href="./index.html">首页</a> ·
-  双工控制通道见 <a href="./duplex.html">duplex</a>
+  <span id="verStamp"></span> · <a href="./index.html" data-i18n="nav.home2">回首頁</a>
 </footer>
 
-<script src="ultra-core.js?v=20261125w"></script>
+<!-- 說明書 -->
+<div class="modal hide" id="dlgManual">
+  <div class="sheet">
+    <div class="sheetHead"><b data-i18n="manual.title">說明書</b><button class="x" onclick="Dlg.close('dlgManual')">✕</button></div>
+    <div class="sheetBody">
+      <h4 data-i18n="manual.h1">三步上手</h4>
+      <p data-i18n="manual.p1">1. 接收端按「開始監聽」；2. 發送端輸入文字按「發送」；3. 手機螢幕上「同步」數字能到 7 或 8 就說明對齊了。</p>
+      <h4 data-i18n="manual.h2">為什麼只用 18.1k</h4>
+      <p data-i18n="manual.p2">實測手機喇叭在 18.1k 為 100%，20.5k 只剩約三成，22.3k 電腦麥克風收不到。加寬頻寬不會提高容錯，只會讓一半資料落到最弱的頻段。要真正提高容錯，靠的是音間距（200 Hz）與符號時長（24 ms）。</p>
+      <h4 data-i18n="manual.h3">雙音 vs 單音</h4>
+      <p data-i18n="manual.p3">雙音：每個符號同時發一個行音與一個列音（4×4＝16 組，4 bit），速率快、誤判少，但每個音只有一半幅度。單音：一個音代表一個符號（3 bit），抗凹陷較好。若雙音一直解不出，切單音對比一次即可判斷。</p>
+      <h4 data-i18n="manual.h4">自動校準</h4>
+      <p data-i18n="manual.p4">每次發送前會先播 1.07 秒的標尺（300 ms 雙音定位 + 4 輪同步），收端據此量出頻率縮放；監聽中若長時間沒解出會自己再量一次。量不準時寧可保留原值，不會亂改。</p>
+      <h4 data-i18n="manual.h5">回執與補包</h4>
+      <p data-i18n="manual.p5">接收端解出包後會回一個位圖回執；發送端據此只補缺的包。回執走同一個頻段。</p>
+      <h4 data-i18n="manual.h6">紀錄怎麼用</h4>
+      <p data-i18n="manual.p6">測試完按「完整紀錄」→「複製」，把整段貼回來即可。紀錄含：版本、設定、每個包的收發時間、同步命中數、邊距、頻率縮放、CRC、能量與門控狀態，以及一段自動判定。</p>
+      <h4 data-i18n="manual.h7">音量與可聽聲</h4>
+      <p data-i18n="manual.p7">人耳聽到的多是喇叭把超聲「檢波」出來的雜音：幅度減半，失真降到四分之一。想安靜先降音量（靜/輕），不要先換頻段。</p>
+    </div>
+  </div>
+</div>
+
+<!-- 完整紀錄 -->
+<div class="modal hide" id="dlgLog">
+  <div class="sheet">
+    <div class="sheetHead"><b data-i18n="log.title">雙向紀錄</b><button class="x" onclick="Dlg.close('dlgLog')">✕</button></div>
+    <div class="sheetBody">
+      <div class="row" style="margin-bottom:8px">
+        <button class="primary" onclick="Log.copy()" data-i18n="log.copy">複製全部</button>
+        <button onclick="Log.clear()" data-i18n="log.clear">清空</button>
+        <span class="chip" id="logStat">—</span>
+      </div>
+      <textarea id="logBox" readonly></textarea>
+    </div>
+  </div>
+</div>
+
+<!-- 設定 -->
+<div class="modal hide" id="dlgSet">
+  <div class="sheet">
+    <div class="sheetHead"><b data-i18n="set.title">設定</b><button class="x" onclick="Dlg.close('dlgSet')">✕</button></div>
+    <div class="sheetBody">
+      <h4 data-i18n="set.repeat">每包重複</h4>
+      <div class="row">
+        <button class="seg on" data-rp="1" onclick="App.repeat(1)">1</button>
+        <button class="seg" data-rp="2" onclick="App.repeat(2)">2</button>
+        <button class="seg" data-rp="3" onclick="App.repeat(3)">3</button>
+      </div>
+      <h4 data-i18n="set.chunk">每包位元組</h4>
+      <div class="row">
+        <button class="seg" data-cb="8" onclick="App.chunk(8)">8</button>
+        <button class="seg" data-cb="12" onclick="App.chunk(12)">12</button>
+        <button class="seg on" data-cb="16" onclick="App.chunk(16)">16</button>
+        <button class="seg" data-cb="24" onclick="App.chunk(24)">24</button>
+        <button class="seg" data-cb="48" onclick="App.chunk(48)">48</button>
+      </div>
+      <div class="chip" id="chunkNote" style="margin-top:8px">—</div>
+      <h4 data-i18n="set.ack">可靠發送</h4>
+      <div class="row">
+        <button class="seg on" data-wa="1" onclick="App.waitAck(true)" data-i18n="set.ackOn">等回執補包</button>
+        <button class="seg" data-wa="0" onclick="App.waitAck(false)" data-i18n="set.ackOff">盲發</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 舊版程式仍在引用的節點：只為避免報錯，全部隱藏 -->
+<div class="hide">
+  <span id="calStat"></span><button id="btnCal" onclick="App.autoCal()"></button><button id="btnCalStop" onclick="App.calStop()"></button>
+  <textarea id="calOut"></textarea>
+  <input type="range" id="rCal" min="-1" max="1" step="0.1" value="0"><span id="vCal"></span>
+  <div id="dSr"></div><div id="dMic"></div><div id="dBuf"></div><div id="dScan"></div><div id="dDrop"></div>
+  <div id="dGate"></div><div id="dDec"></div><div id="sSr"></div>
+  <button id="btnProbe"></button><button id="btnLoop"></button>
+  <span id="loopCnt"></span><span id="ackLoopCnt"></span>
+  <textarea id="diagBox"></textarea><span id="diagCnt"></span>
+  <div id="stSync"></div><div id="dDec2"></div>
+</div>
+
+
+<script>
+/* ================= 版本 / 語系 / 彈窗 / 紀錄 =================
+ * 這一層獨立於 App 內核之外：只碰 DOM，不碰音頻。
+ * 目的：畫面乾淨、按鈕少、紀錄能一鍵帶走。 */
+var VER = { v: 'v2026-11-26a', t: '2026-11-26 08:45' };
+
+/* ---------- 彈窗 ---------- */
+var Dlg = {
+  open: function (id) {
+    var m = document.getElementById(id);
+    if (!m) return;
+    m.classList.remove('hide');
+    if (id === 'dlgLog' && window.Log) Log.render();
+  },
+  close: function (id) {
+    var m = document.getElementById(id);
+    if (m) m.classList.add('hide');
+  }
+};
+document.addEventListener('click', function (e) {
+  if (e.target && e.target.classList && e.target.classList.contains('modal')) Dlg.close(e.target.id);
+});
+
+/* ---------- 雙向紀錄 ---------- */
+window.REC = (function () {
+  var lines = [], diags = [], snaps = [];
+  var rx = { pkts: 0, bytes: 0, first: 0, last: 0, maxHits: 0, crc: 0, err: 0, peak: [], scale: null };
+  var tx = { done: 0, bytes: 0, secs: 0, ok: null, rounds: 0 };
+  var T0 = new Date();
+
+  function p2(n) { return ('0' + n).slice(-2); }
+  function hms(d) { return p2(d.getHours()) + ':' + p2(d.getMinutes()) + ':' + p2(d.getSeconds()); }
+  function stamp() { var d = new Date(); return hms(d) + '.' + ('00' + d.getMilliseconds()).slice(-3); }
+  function ago(t) { return t ? (Date.now() - t) / 1000 : 0; }
+
+  function line(ts, msg) { lines.push(ts + ' ' + msg); if (lines.length > 4000) lines.shift(); }
+  function raw(tag, msg) { lines.push(stamp() + ' [' + tag + '] ' + msg); }
+
+  function diag(l) {
+    diags.push(l); if (diags.length > 400) diags.shift();
+    var m = /命中=(\d+)/.exec(l);
+    if (m && +m[1] > rx.maxHits) rx.maxHits = +m[1];
+    if (/CRC/.test(l) && /失败|fail/i.test(l)) rx.crc++;
+  }
+
+  function pkt(payload, bk, sp) {
+    var p = null;
+    try { p = Ultra.parsePayload(payload); } catch (e) { }
+    var now = Date.now();
+    if (!rx.first) rx.first = now;
+    rx.last = now;
+    rx.pkts++;
+    if (p && p.data) rx.bytes += p.data.length;
+    raw('RX', '包 #' + (p ? (p.seq + 1) : '?') + '/' + (p ? p.total : '?') +
+      ' ' + (p ? p.type : '?') + ' ' + (p && p.data ? p.data.length : 0) + 'B @' + bk + '/' + sp + 'ms' +
+      (rx.pkts > 1 ? ' Δ' + ((now - (rx.prev || now)) / 1000).toFixed(2) + 's' : ''));
+    rx.prev = now;
+  }
+
+  function rxDone(chars, total) {
+    var secs = ago(rx.first);
+    var rate = secs > 0.5 ? chars / secs : 0;
+    var box = document.getElementById('rxRate');
+    if (box) {
+      box.textContent = '速率 ' + rate.toFixed(1) + ' 字/s · ' + chars + ' 字 / ' + secs.toFixed(1) + ' s';
+      box.className = 'chip on';
+    }
+    raw('RATE', '收 ' + chars + ' 字 · ' + total + ' 包 · ' + secs.toFixed(1) + 's · ' + rate.toFixed(1) + ' 字/s');
+    rx.first = 0;
+  }
+
+  function txDone(ok, bytes, secs, rounds) {
+    tx.done++; tx.bytes = bytes; tx.secs = secs; tx.ok = ok; tx.rounds = rounds;
+    raw('TX', '結束 ' + (ok ? '成功' : '未確認') + ' · ' + bytes + 'B / ' + secs.toFixed(1) + 's = ' +
+      (secs > 0 ? (bytes / secs).toFixed(1) : 0) + ' B/s · ' + rounds + ' 輪');
+  }
+
+  function snap() {
+    var pk = document.getElementById('dPeak');
+    var hits = document.getElementById('rxHits');
+    var drop = document.getElementById('dDrop');
+    var st = {
+      t: hms(new Date()),
+      f: pk && /^\d+$/.test(pk.textContent) ? +pk.textContent : 0,
+      h: hits ? +hits.textContent || 0 : 0,
+      r: drop && /%$/.test(drop.textContent || '') ? parseFloat(drop.textContent) : null
+    };
+    snaps.push(st); if (snaps.length > 90) snaps.shift();
+    if (st.f) rx.peak.push(st.f);
+    if (st.f && st.f >= 17500) {
+      var box = document.getElementById('rxRate');
+      if (box && !/速率 \d/.test(box.textContent)) box.textContent = '速率 等待完整包';
+    }
+  }
+  setInterval(snap, 1000);
+
+  function settings() {
+    function pick(attr) {
+      var e = document.querySelector('[data-' + attr + '].seg.on');
+      return e ? (e.getAttribute('data-' + attr) || e.textContent.trim()) : '-';
+    }
+    return '模式=' + (document.getElementById('mdDual') && /\bon\b/.test(document.getElementById('mdDual').className) ? '雙音4bit' : '單音3bit') +
+      ' 頻帶=18.1k 符號=24ms 重複=' + pick('rp') + ' 每包=' + pick('cb') + 'B 音量=' + pick('gn') +
+      ' 等回執=' + (pick('wa') === '1' ? 'on' : 'off');
+  }
+
+  function report() {
+    var ua = navigator.userAgent;
+    var head = '=== UltraLink 紀錄 ' + VER.v + ' （' + VER.t + '） ===';
+    var out = [head,
+      '匯出 ' + stamp() + ' · 裝置 ' + ua,
+      '頁面 ultra.html · ' + settings()];
+    var sr = document.getElementById('stSr');
+    var pk = document.getElementById('stPk'), crc = document.getElementById('stCrc');
+    out.push('RX 解出=' + (pk ? pk.textContent : 0) + ' CRC=' + (crc ? crc.textContent : 0) +
+      ' 採樣=' + (sr ? sr.textContent : '-') + ' 同步最高=' + rx.maxHits + '/8 收位元組=' + rx.bytes);
+    if (rx.peak.length) {
+      var xs = rx.peak.slice(-60).sort(function (a, b) { return a - b; });
+      out.push('RX 峰值頻率 中位=' + xs[Math.floor(xs.length / 2)] + 'Hz 區間=' + xs[0] + '–' + xs[xs.length - 1] + 'Hz');
+    }
+    if (tx.done) out.push('TX 最後一次=' + (tx.ok ? '成功' : '未確認') + ' ' + tx.bytes + 'B /' + tx.secs.toFixed(1) + 's = ' +
+      (tx.secs > 0 ? (tx.bytes / tx.secs).toFixed(1) : 0) + ' B/s · ' + tx.rounds + ' 輪');
+
+    out.push('', '--- 逐秒採樣（近 ' + snaps.length + ' 秒：頻率/同步命中/收樣率）---');
+    out.push(snaps.map(function (s) { return s.t + ' ' + (s.f || '-') + 'Hz h=' + s.h + '/8 ' + (s.r == null ? '-' : s.r + '%'); }).join('\n'));
+
+    out.push('', '--- 事件 ---', lines.slice(-120).join('\n'));
+    out.push('', '--- 解碼器（同步/邊距/縮放，近 ' + Math.min(diags.length, 120) + ' 條）---', diags.slice(-120).join('\n'));
+
+    out.push('', '--- 自動判定 ---', diagnose().join('\n'));
+    out.push('', '（以上整段貼回即可，不需其他描述）');
+    return out.join('\n');
+  }
+
+  function diagnose() {
+    var s = [], n = rx.pkts, h = rx.maxHits;
+    var pkEl = document.getElementById('stPk');
+    var dec = pkEl ? (+pkEl.textContent || 0) : 0;
+    var xs = rx.peak.slice(-60).sort(function (a, b) { return a - b; });
+    var med = xs.length ? xs[Math.floor(xs.length / 2)] : 0;
+
+    if (n > 0) s.push('· 正向鏈路已打通（解出 ' + n + ' 個包），問題在補包/回執或個別包丟失。');
+    else if (h >= 6) s.push('· 同步頭能命中 ' + h + '/8，但資料段一個都沒解出：多半是符號判決門檻太嚴、或喇叭削頂/多音互相干擾。');
+    else if (h >= 1) s.push('· 同步只命中 ' + h + '/8（不足 6）：頻率縮放或符號時長對不上，先看「縮放」是否偏離 1.000 超過 1.5%。');
+    else s.push('· 同步命中 0/8：收端完全沒形成候選。要嘛音量太小、要嘛峰值頻率與 18100 差太遠（喇叭/麥克風凹陷），要嘛雙音的某一路被吃掉。');
+
+    if (med && Math.abs(med - 18100) > 350) s.push('· 峰值頻率中位 ' + med + 'Hz，離 18100 差 ' + Math.abs(med - 18100) + 'Hz：這一檔在該裝置上不響，換單音/換音量或換裝置再試。');
+    if (rx.crc) s.push('· CRC 失敗 ' + rx.crc + ' 次：已解到包但符號有錯，屬時序漂移/邊界判錯，延長符號或提高音量。');
+    if (dec > 0 && n === 0) s.push('· 統計顯示「解出 ' + dec + '」卻沒有包記錄：舊計數殘留，重開頁面再看。');
+    var drop = document.getElementById('dDrop');
+    if (drop && parseFloat(drop.textContent) > 0 && parseFloat(drop.textContent) < 90) s.push('· 收樣率只有 ' + drop.textContent + '：手機音頻回調跟不上，關後台、降螢幕負載。');
+    if (!tx.done) s.push('· 這份紀錄裡沒有「TX 結束」：發送端沒跑完，或這份是收端頁的紀錄。');
+    return s;
+  }
+
+  function clear() {
+    lines = []; diags = []; snaps = [];
+    rx = { pkts: 0, bytes: 0, first: 0, last: 0, maxHits: 0, crc: 0, err: 0, peak: [], scale: null };
+    tx = { done: 0, bytes: 0, secs: 0, ok: null, rounds: 0 };
+    var a = document.getElementById('log'), b = document.getElementById('logTx');
+    if (a) a.textContent = ''; if (b) b.textContent = '';
+    if (window.Log) Log.render();
+  }
+
+  function copy() {
+    var txt = report();
+    var stat = document.getElementById('logStat');
+    function done(ok) { if (stat) stat.textContent = ok ? '已複製 ' + txt.length + ' 字元' : '複製失敗，長按全選'; }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(txt).then(function () { done(true); }, function () { fallback(); });
+    } else fallback();
+    function fallback() {
+      var box = document.getElementById('logBox');
+      try { box.removeAttribute('readonly'); box.select(); box.setSelectionRange(0, txt.length); done(document.execCommand('copy')); box.setAttribute('readonly', 'readonly'); }
+      catch (e) { done(false); }
+    }
+  }
+
+  return { line: line, raw: raw, diag: diag, pkt: pkt, rxDone: rxDone, txDone: txDone, report: report, clear: clear, copy: copy, rx: rx, tx: tx, started: T0 };
+})();
+
+var Log = {
+  render: function () {
+    var box = document.getElementById('logBox');
+    if (!box) return;
+    box.value = REC.report();
+    var stat = document.getElementById('logStat');
+    if (stat) stat.textContent = 'RX ' + REC.rx.pkts + ' 包 · TX ' + (REC.tx.done ? '已跑 ' + REC.tx.done + ' 次' : '未跑');
+  },
+  copy: function () { REC.copy(); },
+  clear: function () { REC.clear(); }
+};
+
+/* ---------- 語系 ---------- */
+var I18N = {
+  'app.name': ['超聲波通道', 'Ultrasonic Link'],
+  'app.sub': ['UltraLink · 雙音 18.1k · 24ms', 'UltraLink · dual 18.1k · 24ms'],
+  'app.idle': ['待機', 'Idle'],
+  'nav.manual': ['說明書', 'Help'],
+  'nav.home': ['首頁', 'Home'],
+  'nav.home2': ['回首頁', 'Home'],
+  'tab.rx': ['接收', 'Receive'],
+  'tab.tx': ['發送', 'Send'],
+  'rx.quiet': ['安靜', 'Quiet'],
+  'rx.sync': ['同步', 'sync'],
+  'rx.pk': ['解出', 'pkts'],
+  'rx.rate0': ['速率 —', 'Rate —'],
+  'rx.start': ['開始監聽', 'Listen'],
+  'rx.stop': ['停止', 'Stop'],
+  'rx.clear': ['清空', 'Clear'],
+  'rx.text': ['收到的文字', 'Received text'],
+  'rx.ackAuto': ['自動回執', 'Auto ACK'],
+  'rx.ackOff': ['不回執', 'No ACK'],
+  'log.open': ['完整紀錄', 'Full log'],
+  'log.title': ['雙向紀錄', 'Duplex log'],
+  'log.copy': ['複製全部', 'Copy all'],
+  'log.clear': ['清空', 'Clear'],
+  'tx.silent': ['靜音', 'Silent'],
+  'tx.rate0': ['傳輸速率 —', 'Rate —'],
+  'tx.ping': ['單音 Ping', 'Ping'],
+  'gain.quiet': ['靜', 'Soft'],
+  'gain.low': ['輕', 'Low'],
+  'gain.std': ['標準', 'Std'],
+  'gain.loud': ['響', 'Loud'],
+  'mod.dual': ['雙音 4bit', 'Dual 4bit'],
+  'mod.single': ['單音 3bit', 'Single 3bit'],
+  'tx.halt': ['硬停', 'Halt'],
+  'tx.text': ['發送文字', 'Send text'],
+  'tx.ph': ['輸入要傳送的內容（例如 Wi-Fi 密碼、口令）', 'Text to send (e.g. Wi-Fi password)'],
+  'tx.send': ['發送', 'Send'],
+  'tx.file': ['發送檔案', 'Send file'],
+  'set.title': ['設定', 'Settings'],
+  'set.repeat': ['每包重複', 'Repeats per packet'],
+  'set.chunk': ['每包位元組', 'Bytes per packet'],
+  'set.ack': ['可靠發送', 'Reliable send'],
+  'set.ackOn': ['等回執補包', 'Wait for ACK'],
+  'set.ackOff': ['盲發', 'Blind send'],
+  'manual.title': ['說明書', 'Guide'],
+  'manual.h1': ['三步上手', 'Quick start'],
+  'manual.p1': ['1. 接收端按「開始監聽」；2. 發送端輸入文字按「發送」；3. 手機上「同步」數字能到 7 或 8 就說明對齊了。',
+    '1. Receiver: tap "Listen". 2. Sender: type text, tap "Send". 3. When the "sync" figure reaches 7–8 of 8, both ends are aligned.'],
+  'manual.h2': ['為什麼只用 18.1k', 'Why 18.1k only'],
+  'manual.p2': ['實測手機喇叭在 18.1k 為 100%，20.5k 只剩約三成，22.3k 電腦麥克風收不到。加寬頻寬不會提高容錯，只會讓一半資料落到最弱的頻段。真正的容錯來自音間距（200 Hz）與符號時長（24 ms）。',
+    'Measured: the phone speaker delivers 100% at 18.1k, about 30% at 20.5k, and the PC mic hears nothing at 22.3k. Widening the band does not add robustness — it puts half the data in the weakest region. Robustness comes from tone spacing (200 Hz) and symbol time (24 ms).'],
+  'manual.h3': ['雙音 vs 單音', 'Dual vs single'],
+  'manual.p3': ['雙音：每個符號同時發一個行音與一個列音（4×4＝16 組，4 bit），更快、誤判更少，但每個音只有一半幅度。單音：一個音一個符號（3 bit），抗凹陷較好。雙音一直解不出時，切單音對比一次即可判斷。',
+    'Dual: each symbol sends one row tone plus one column tone (4×4 = 16 pairs, 4 bits). Faster and fewer misreads, but each tone gets half the amplitude. Single: one tone per symbol (3 bits), more tolerant of frequency notches. If dual never decodes, switch to single once to compare.'],
+  'manual.h4': ['自動校準', 'Auto calibration'],
+  'manual.p4': ['每次發送前會先播 1.07 秒標尺（300 ms 雙音定位 + 4 輪同步），收端據此量出頻率縮放；監聽中長時間沒解出會自己再量一次。量不準時寧可保留原值，不會亂改。',
+    'Every send starts with a 1.07 s ruler (300 ms dual locator + 4 sync rounds); the receiver measures its frequency scale from it, and re-measures if nothing decodes for a while. A bad measurement is rejected rather than written.'],
+  'manual.h5': ['回執與補包', 'ACK and repair'],
+  'manual.p5': ['接收端解出包後回一個位圖回執，發送端據此只補缺的包，回執走同一頻段。',
+    'The receiver returns a bitmap ACK after decoding; the sender re-sends only the missing packets. The ACK uses the same band.'],
+  'manual.h6': ['紀錄怎麼用', 'How to use the log'],
+  'manual.p6': ['測試完按「完整紀錄」→「複製」，把整段貼回即可。紀錄含版本、設定、每個包的收發時間、同步命中數、邊距、頻率縮放、CRC、採樣率，以及一段自動判定。',
+    'After a test, tap "Full log" then "Copy all" and paste it back. It contains version, settings, per-packet timing, sync hits, margins, frequency scale, CRC, sample rate, plus an automatic diagnosis.'],
+  'manual.h7': ['音量與可聽聲', 'Volume and audible noise'],
+  'manual.p7': ['人耳聽到的多是喇叭把超聲檢波出來的雜音：幅度減半，失真降到四分之一。想安靜先降音量（靜/輕），不要先換頻段。',
+    'What you hear is mostly intermodulation from the speaker detecting ultrasound: halving the amplitude cuts that distortion to a quarter. To be quieter, lower the volume first, not the band.']
+};
+
+var Lang = (function () {
+  var cur = 'zh';
+  function apply(lang) {
+    cur = lang;
+    document.querySelectorAll('[data-i18n]').forEach(function (e) {
+      var k = e.getAttribute('data-i18n'), v = I18N[k];
+      if (v) e.textContent = v[lang === 'en' ? 1 : 0];
+    });
+    document.querySelectorAll('[data-i18n-ph]').forEach(function (e) {
+      var k = e.getAttribute('data-i18n-ph'), v = I18N[k];
+      if (v) e.setAttribute('placeholder', v[lang === 'en' ? 1 : 0]);
+    });
+    document.querySelectorAll('[data-i18n-title]').forEach(function (e) {
+      var k = e.getAttribute('data-i18n-title'), v = I18N[k];
+      if (v) e.setAttribute('title', v[lang === 'en' ? 1 : 0]);
+    });
+    var btn = document.getElementById('btnLang');
+    if (btn) btn.textContent = lang === 'en' ? '中' : 'EN';
+    document.documentElement.lang = lang === 'en' ? 'en' : 'zh-Hant';
+    try { localStorage.setItem('ultra-lang', lang); } catch (e) { }
+  }
+  function toggle() { apply(cur === 'zh' ? 'en' : 'zh'); }
+  return { apply: apply, toggle: toggle, get: function () { return cur; } };
+})();
+
+/* ---------- 頁腳版本戳 ---------- */
+(function stampFoot() {
+  var el = document.getElementById('verStamp');
+  if (el) el.textContent = VER.v + ' · 更新 ' + VER.t;
+  var sub = document.querySelector('.brand small');
+  if (sub) sub.textContent = I18N['app.sub'][0];
+  try { if (localStorage.getItem('ultra-lang') === 'en') Lang.apply('en'); } catch (e) { }
+})();
+</script>
+
+<script src="ultra-core.js?v=20261126a"></script>
 <script>
 var App = (function () {
   /* ===== 单档单速（2026-11-25 起）=====
@@ -357,18 +672,15 @@ var App = (function () {
   function $(id) { return document.getElementById(id); }
 
   function log(msg, cls) {
-    var el = $('log'), txlog = $('logTx');
     var t = new Date();
-    var line = ('0' + t.getHours()).slice(-2) + ':' + ('0' + t.getMinutes()).slice(-2) + ':' +
-      ('0' + t.getSeconds()).slice(-2) + '  ' + msg;
-    [el, txlog].forEach(function (e) {
+    var ts = ('0' + t.getHours()).slice(-2) + ':' + ('0' + t.getMinutes()).slice(-2) + ':' +
+      ('0' + t.getSeconds()).slice(-2);
+    /* 界面只留「最新一行」，完整历史进 REC（按「完整紀錄」一键复制） */
+    if (window.REC) REC.line(ts, msg);
+    [$('log'), $('logTx')].forEach(function (e) {
       if (!e) return;
-      var d = document.createElement('div');
-      d.textContent = line;
-      if (cls) d.style.color = cls;
-      e.appendChild(d);
-      e.scrollTop = e.scrollHeight;
-      while (e.childNodes.length > 200) e.removeChild(e.firstChild);
+      e.textContent = ts + '  ' + msg;
+      e.style.color = cls || '';
     });
   }
 
@@ -397,7 +709,7 @@ var App = (function () {
       if (b.key !== ONE_BAND) return;
       var d = document.createElement('div');
       d.className = 'meter';
-      d.innerHTML = '<span class="nm">18.1k</span><span class="bar"><i id="bar-' + b.key + '"></i></span><span class="vl" id="val-' + b.key + '">-</span>';
+      d.innerHTML = '<span class="nm">18.1k</span><span class="bar"><i id="bar-' + b.key + '"></i></span><span class="vl" id="val-' + b.key + '">0%</span>';
       m.appendChild(d);
     });
   }
@@ -745,6 +1057,7 @@ var App = (function () {
       ' 最低=' + (ev.minMargin && ev.minMargin < 99 ? ev.minMargin.toFixed(1) : '-') + 'dB' +
       ' 漂移=' + (ev.drift ? ev.drift.toFixed(1) : '-') + ' ' + (ev.info || '');
     diagLines.push(line);
+    if (window.REC) REC.diag(line);
     if (diagLines.length > DIAG_MAX) diagLines.shift();
     var box = $('diagBox'), cnt = $('diagCnt');
     if (box) {
@@ -772,6 +1085,7 @@ var App = (function () {
 
   function onPacket(payload, b, sp) {
     inc('stPk');
+    if (window.REC) REC.pkt(payload, b ? b.key : '-', sp);
     if (b && b.key) ackBandKey = b.key;      // 回执跟着「最后成功解出的那一档」走
     var p = Ultra.parsePayload(payload);
     if (!p) return;
@@ -786,6 +1100,7 @@ var App = (function () {
         var s = Ultra.joinText(textState.parts, textState.total);
         $('outText').textContent = s || '';
         log('收到文字 ' + (s ? s.length : 0) + ' 字 · 经 ' + b.name + '/' + sp + 'ms', '#0a5f4f');
+        if (window.REC) REC.rxDone(s ? s.length : 0, textState.total);
       } else {
         var miss = [];
         for (var k = 0; k < textState.total; k++) if (!textState.parts[k]) miss.push(k + 1);
@@ -885,7 +1200,9 @@ var App = (function () {
       decoders[0].scanBest = 0;
     }
     if (now() - rxBestAt > 1000) { rxBestHits = 0; rxBestAt = now(); }
-    if (lv) lv.textContent = (pk.f ? ('听到 ' + (pk.f >= 17500 ? '超声' : '低频杂音')) : '很安静') + ' · 同步命中 ' + rxBestHits + '/8';
+    if (lv) lv.textContent = pk.f ? (pk.f >= 17500 ? '聽到超聲' : '低頻雜音') : '安靜';
+    var hitsEl = $('rxHits');
+    if (hitsEl) hitsEl.textContent = rxBestHits;
     /* 收样率：回调里只累加样本数，这里算比值 —— 这才是「麦克风到底喂进来多少」的真数。 */
     if (rxT0) {
       var el2 = (performance.now() - rxT0) / 1000;
@@ -1002,7 +1319,7 @@ var App = (function () {
     var pk = Ultra.peakFreq(buf, sr, 16000, 24000, 80);
     var el = $('sOut');
     if (el) {
-      el.textContent = pk.v > 1e-6 ? pk.f : '静音';
+      el.textContent = pk.v > 1e-6 ? pk.f : '—';
       el.style.fontSize = pk.v > 1e-6 ? '38px' : '22px';
       el.style.color = pk.f >= 17500 ? 'var(--accent-2)' : (pk.v > 1e-6 ? '#c0392b' : 'var(--muted)');
     }
@@ -1011,15 +1328,18 @@ var App = (function () {
   /* 发送档位提示：把「这轮用的是哪一档、中心多少赫」写在 Hz 下面，省得猜 */
   function markTx(b, live) {
     var t = $('txTag');
-    if (t && b) t.textContent = (live ? '正在发 · ' : '档位 · ') + b.name + '（' + b.f0 + ' Hz 起）';
+    if (t && b) {
+      t.textContent = (live ? '正在發 ' : '') + b.name;
+      t.className = 'chip' + (live ? ' on' : '');
+    }
     var r = $('txRate');
-    if (r) r.textContent = '18.1k · ' + symMs + 'ms/符号 · ' + (dualOn() ? '双音 4bit' : '单音 3bit') +
-      ' · 每包 ' + chunkBytes + 'B（约 ' + (packetSymbols() * symMs / 1000 + 0.3).toFixed(1) + ' 秒）';
+    if (r) r.textContent = (dualOn() ? '雙音 4bit' : '單音 3bit') + ' · ' + symMs + 'ms · 每包 ' +
+      chunkBytes + 'B · ' + (packetSymbols() * symMs / 1000 + 0.3).toFixed(1) + 's';
   }
 
   function markTxIdle() {
     var t = $('txTag');
-    if (t) t.textContent = '未在发送';
+    if (t) { t.textContent = '待機'; t.className = 'chip'; }
   }
 
   /* ---------- 发送 ---------- */
@@ -1163,6 +1483,8 @@ var App = (function () {
   function sendReliable(packets, onProgress, onDone) {
     var tok = ++sendSeq;                 // 每次发送一个令牌：旧链的回调一律作废，不许再往下跑
     var round = 1, MAX_ROUNDS = 6;
+    var t0 = performance.now(), bytes = 0;
+    for (var q = 0; q < packets.length; q++) bytes += (packets[q].data ? packets[q].data.length : 0) + 4;
     var pending = [];
     for (var i = 0; i < packets.length; i++) pending.push(i);
     function alive() { return tok === sendSeq; }
@@ -1192,6 +1514,14 @@ var App = (function () {
       sending = false;
       ackClose();                       // 收工就放麦，别把麦克风一直占着
       if (why) log(why, ok ? '#0a5f4f' : '#b4791f');
+      var secs = (performance.now() - t0) / 1000;
+      var bps = secs > 0.2 ? bytes / secs : 0;
+      var box = $('xferRate');
+      if (box && bytes) {
+        box.textContent = '傳輸速率 ' + bps.toFixed(1) + ' B/s · ' + bytes + ' B / ' + secs.toFixed(1) + ' s';
+        box.className = 'chip on';
+      }
+      if (window.REC) REC.txDone(ok, bytes, secs, round);
       if (onDone) onDone(ok);
     }
     function loop() {
@@ -1299,7 +1629,7 @@ var App = (function () {
     repeat: function (v) {
       repeats = v;
       Array.prototype.forEach.call(document.querySelectorAll('[data-rp]'), function (b) {
-        b.className = 'pill' + (parseInt(b.dataset.rp, 10) === v ? ' on' : '');
+        b.className = 'seg' + (parseInt(b.dataset.rp, 10) === v ? ' on' : '');
       });
     },
 
@@ -1308,8 +1638,8 @@ var App = (function () {
     mode: function (m) {
       MODE = (m === 'single') ? 'single' : 'dual';
       if (Ultra.setMode) Ultra.setMode(MODE);
-      if ($('mdDual')) $('mdDual').className = 'pill' + (MODE === 'dual' ? ' on' : '');
-      if ($('mdSingle')) $('mdSingle').className = 'pill' + (MODE === 'single' ? ' on' : '');
+      if ($('mdDual')) $('mdDual').className = 'seg' + (MODE === 'dual' ? ' on' : '');
+      if ($('mdSingle')) $('mdSingle').className = 'seg' + (MODE === 'single' ? ' on' : '');
       log('调制切换：' + (MODE === 'dual' ? '双音 4bit/符号（16 组，行+列同时对上才算）' : '单音 3bit/符号'), '#0a5f4f');
       if (running) {
         this.stopRx();
@@ -1322,11 +1652,10 @@ var App = (function () {
     chunk: function (v) {
       chunkBytes = v;
       Array.prototype.forEach.call(document.querySelectorAll('[data-cb]'), function (b) {
-        b.className = 'pill' + (parseInt(b.dataset.cb, 10) === v ? ' on' : '');
+        b.className = 'seg' + (parseInt(b.dataset.cb, 10) === v ? ' on' : '');
       });
       var secs = (Ultra.packetSymbols(v) * symMs / 1000).toFixed(1);
-      $('chunkNote').textContent = '每包 ' + v + ' 字节 ≈ ' + symMs + 'ms 下 ' + secs +
-        ' 秒一包。包越短越抗中途失步，中文（一个字 3 字节）尤其要短。';
+      $('chunkNote').textContent = '每包 ' + v + 'B · 約 ' + secs + 's/包';
       log('每包载荷 ' + v + ' 字节（约 ' + secs + ' 秒/包）');
       markTx(band);
     },
@@ -1334,7 +1663,7 @@ var App = (function () {
     waitAck: function (on) {
       waitAckOn = !!on;
       Array.prototype.forEach.call(document.querySelectorAll('[data-wa]'), function (b) {
-        b.className = 'pill' + (parseInt(b.dataset.wa, 10) === (on ? 1 : 0) ? ' on' : '');
+        b.className = 'seg' + (parseInt(b.dataset.wa, 10) === (on ? 1 : 0) ? ' on' : '');
       });
       log(on ? '可靠发送：开（发完开麦等对方回执，只补缺包）' : '盲发：每包轮发 ' + repeats + ' 遍，不等回执');
     },
@@ -1342,7 +1671,7 @@ var App = (function () {
     ackReply: function (on) {
       ackReplyOn = !!on;
       Array.prototype.forEach.call(document.querySelectorAll('[data-ar]'), function (b) {
-        b.className = 'pill' + (parseInt(b.dataset.ar, 10) === (on ? 1 : 0) ? ' on' : '');
+        b.className = 'seg' + (parseInt(b.dataset.ar, 10) === (on ? 1 : 0) ? ' on' : '');
       });
       log(on ? '自动回执：开（缺包时自动回一段位图，18.1k/16ms）' : '自动回执：关');
     },
@@ -1350,7 +1679,7 @@ var App = (function () {
     gain: function (v) {
       var g = Ultra.setGain(v);
       Array.prototype.forEach.call(document.querySelectorAll('[data-gn]'), function (b) {
-        b.className = 'pill' + (parseFloat(b.dataset.gn) === v ? ' on' : '');
+        b.className = 'seg' + (parseFloat(b.dataset.gn) === v ? ' on' : '');
       });
       log('发送音量 ' + g.toFixed(2));
     },
@@ -1703,14 +2032,15 @@ var App = (function () {
       ['stPk', 'stSync', 'stCrc'].forEach(function (id) { $(id).textContent = '0'; });
     },
 
-    probe: function () {
+    probe: function (key) {
       ensureCtx();
-      $('btnProbe').disabled = true;
-      log('发探测音 ' + band.name + ' · 1.2s');
-      markTx(band);
-      tx.probe(band, 1200, function () {
-        $('btnProbe').disabled = false;
-        log('探测音结束');
+      var b = band;
+      Ultra.BANDS.forEach(function (x) { if (x.key === key) b = x; });
+      log('單音 Ping ' + b.name + ' · 1.2s（對端只看「最強音」是不是這個數）');
+      markTx(b, true);
+      tx.probe(b, 1200, function () {
+        log('Ping 結束：' + b.name);
+        markTx(band);
       });
     },
 
@@ -1780,7 +2110,6 @@ var App = (function () {
   };
 })();
 
-App.speed(24);
 App.repeat(1);
 App.chunk(16);
 (function init() {
