@@ -31,6 +31,13 @@
    * 单个杂音再响也不会自己凑出一个符号，误判率比单音低；代价是两个音各分一半幅度。
    * 双音模式的包头用一组「行音和列音都不同」的图案，避免整组同音凑出假同步。 */
   var SYNC2 = [0, 15, 5, 10, 3, 12, 6, 9];
+  /* ---- 4 音 2bit（quad）：18.1 / 18.7 / 19.3 / 19.9 kHz，音距 600 Hz ----
+   * 为什么是它：8 音双音在 1.4 kHz 里塞 8 个音（音距 200 Hz），判决只有 3 个频率格余量，
+   * 房间一次反射就能把相邻音喂进判决格；而 4 音在 2.4 kHz 可用带里能拉到 600 Hz（3 倍余量），
+   * 每符号只发一条音 → 幅度全给它（比双音每音多 6 dB），仿真里 SER 从 6.6% 降到 ≈0。
+   * 代价：4 bit/符号 → 2 bit/符号，同样 24ms 下速率减半（与「双音 4bit/48ms」相同）。 */
+  var SYNC4 = [0, 2, 1, 3, 2, 0, 3, 1];      // 4 条音各出现两次，可直接量逐音增益做均衡
+  var QBAND = { key: 'quad', name: '18.1k·4音', f0: 18100, df: 600, n: 4, label: '推薦', desc: '4 音 2bit：音距 600Hz，抗反射最强' };
   var MODE = 'single';               // 默认单音（兼容旧测试/旧页面）；页面显式切 'dual' 走双音 4 bit/符号
 
   function pairTones(sym) {
@@ -38,7 +45,7 @@
     return [s >> 2, 4 + (s & 3)];
   }
   function setMode(m) {
-    MODE = (m === 'single') ? 'single' : 'dual';
+    MODE = (m === 'dual' || m === 'quad') ? m : 'single';
     return MODE;
   }
   function getMode() { return MODE; }
@@ -61,9 +68,12 @@ var GAIN = 0.72;          // 默认标准音量：够响，又不至于让喇叭
   ];
 
   function bandByKey(k) {
+    if (k === 'quad') return QBAND;
     for (var i = 0; i < BANDS.length; i++) if (BANDS[i].key === k || BANDS[i].name === k) return BANDS[i];
     return BANDS[0];
   }
+  /* 一档频带里有几条音（8 音的老格式；4 音的新格式） */
+  function nTones(band) { return (band && band.n) ? band.n : TONES; }
 
   /* ---------------- CRC16-CCITT ---------------- */
   function crc16(u8) {
@@ -187,6 +197,7 @@ var GAIN = 0.72;          // 默认标准音量：够响，又不至于让喇叭
   }
 
   function packetSymbols(payloadLen) {
+    if (MODE === 'quad') return packetSymbols4(payloadLen);
     if (MODE === 'dual') return packetSymbols2(payloadLen);
     return 1 + SYNC.length + 3 * (2 + payloadLen + 2) + 1;
   }
@@ -243,14 +254,58 @@ var GAIN = 0.72;          // 默认标准音量：够响，又不至于让喇叭
     return x;
   }
 
+  /* ---- 4 音 2bit 波形（quad）：每符号一条音，幅度全给它（双音各分一半的 6 dB 省回来了） ---- */
+  function makeWaveformQuad(packet, sr, band, symMs) {
+    if (!packet || !packet.length) throw new Error('makeWaveformQuad: 空包');
+    if (packet.length > 220) throw new Error('makeWaveformQuad: 这不是包（' + packet.length + ' 字节）');
+    sr = sr || SR;
+    band = band || QBAND;
+    symMs = symMs || 24;
+    var symLen = Math.round(sr * symMs / 1000);
+    var data = bytesToSymbols4(packet);
+    var syms = new Uint8Array(2 + SYNC4.length + data.length);
+    syms[0] = SYNC4[0];
+    for (var i = 0; i < SYNC4.length; i++) syms[1 + i] = SYNC4[i];
+    syms.set(data, 1 + SYNC4.length);
+    syms[syms.length - 1] = SYNC4[0];
+
+    var total = syms.length * symLen;
+    var x = new Float32Array(total);
+    var step = TWO_PI / sr;
+    var phase = 0, p = 0;
+    var glide = Math.max(1, Math.round(sr * GLIDE_MS / 1000));
+    var prevW = step * toneFreq(band, syms[0]);
+    for (var s = 0; s < syms.length; s++) {
+      var tw = step * toneFreq(band, syms[s]);
+      var gl = Math.min(glide, Math.round(symLen / 4));
+      for (var n = 0; n < symLen; n++) {
+        var w = tw;
+        if (gl && n < gl) { var u = n / gl; w = prevW + (tw - prevW) * u; }
+        x[p++] = Math.sin(phase) * GAIN;
+        phase += w;
+        if (phase > TWO_PI) phase -= TWO_PI;
+      }
+      prevW = tw;
+    }
+    var ramp = Math.max(1, Math.round(sr * RAMP_MS / 1000));
+    for (var k = 0; k < ramp && k < total; k++) {
+      var g = k / ramp;
+      x[k] *= g;
+      x[total - 1 - k] *= g;
+    }
+    return x;
+  }
+
   function makeWaveform(packet, sr, band, symMs, dual) {
     sr = sr || SR;
     band = band || BANDS[2];
     symMs = symMs || 16;
-    if (dual === undefined) dual = (MODE === 'dual');
+    if (dual === undefined) dual = (MODE === 'dual' ? 'dual' : (MODE === 'quad' ? 'quad' : 'single'));
     if (!packet || !packet.length) throw new Error('makeWaveform: 空包');
     if (packet.length > 220) throw new Error('makeWaveform: 这不是包（' + packet.length + ' 字节）');
-    if (dual) return makeWaveformDual(packet, sr, band, symMs);
+    var md = (dual === true) ? MODE : (dual === false ? 'single' : dual);
+    if (md === 'quad') return makeWaveformQuad(packet, sr, band, symMs);
+    if (md === 'dual') return makeWaveformDual(packet, sr, band, symMs);
     var symLen = Math.round(sr * symMs / 1000);
     var data = bytesToSymbols(packet);
     var syms = new Uint8Array(2 + SYNC.length + data.length);
@@ -328,15 +383,16 @@ var GAIN = 0.72;          // 默认标准音量：够响，又不至于让喇叭
 
   function classify(x, off, len, sr, band, scale) {
     if (off < 0 || off + len > x.length) return -1;
-    var mags = new Float64Array(TONES), sum = 0, best = 0;
-    for (var t = 0; t < TONES; t++) {
+    var N = nTones(band);
+    var mags = new Float64Array(N), sum = 0, best = 0;
+    for (var t = 0; t < N; t++) {
       var m = goertzel(x, off, len, toneFreq(band, t, scale), sr);
       if (!(m >= 0)) m = 0;
       mags[t] = m;
       sum += m;
       if (m > mags[best]) best = t;
     }
-    var mean = sum / TONES;
+    var mean = sum / N;
     if (mags[best] <= 0) return -1;
     if (mags[best] < mean * 1.8) return -1;   // 门限比双工版略松，窄带下更容易起解
     return best;
@@ -428,6 +484,28 @@ var GAIN = 0.72;          // 默认标准音量：够响，又不至于让喇叭
     return 1 + SYNC2.length + 2 * (2 + payloadLen + 2) + 1;
   }
 
+  /* 4 音 2bit：一个字节拆成 4 个 2bit 符号 */
+  function bytesToSymbols4(u8) {
+    var out = new Uint8Array(u8.length * 4);
+    for (var i = 0; i < u8.length; i++) {
+      out[i * 4] = (u8[i] >> 6) & 3;
+      out[i * 4 + 1] = (u8[i] >> 4) & 3;
+      out[i * 4 + 2] = (u8[i] >> 2) & 3;
+      out[i * 4 + 3] = u8[i] & 3;
+    }
+    return out;
+  }
+  function symbolsToBytes4(syms) {
+    var out = new Uint8Array(Math.floor(syms.length / 4));
+    for (var i = 0; i < out.length; i++) {
+      out[i] = ((syms[i * 4] & 3) << 6) | ((syms[i * 4 + 1] & 3) << 4) | ((syms[i * 4 + 2] & 3) << 2) | (syms[i * 4 + 3] & 3);
+    }
+    return out;
+  }
+  function packetSymbols4(payloadLen) {
+    return 1 + SYNC4.length + 4 * (2 + payloadLen + 2) + 1;
+  }
+
   /* 频带能量：给频谱条和探测结果用，返回 {peak, mean, ratio, freqs[]} */
   function bandEnergy(x, sr, band) {
     var n = Math.min(x.length, Math.round(sr * 0.08));
@@ -452,8 +530,8 @@ var GAIN = 0.72;          // 默认标准音量：够响，又不至于让喇叭
     for (var d = -(span || 0); d <= (span || 0); d += step) {
       var o = off + d;
       if (o < 0 || o + len > x.length) continue;
-      var top = -1, second = -1, topT = 0, es = new Array(TONES);
-      for (var t = 0; t < TONES; t++) {
+      var top = -1, second = -1, topT = 0, es = new Array(nTones(band));
+      for (var t = 0; t < nTones(band); t++) {
         var m = goertzel(x, o, len, toneFreq(band, t, scale), sr);
         es[t] = m;
         if (m > top) { second = top; top = m; topT = t; }
@@ -626,36 +704,39 @@ var GAIN = 0.72;          // 默认标准音量：够响，又不至于让喇叭
   function makeRuler(sr, band, symMs, rounds, locMs, dual) {
     sr = sr || SR; band = band || BANDS[0];
     symMs = symMs || 24; rounds = Math.max(2, rounds || 4);
-    if (dual === undefined) dual = (MODE === 'dual');
+    var md = (dual === undefined || dual === true) ? MODE
+      : (dual === false ? 'single' : dual);
+    if (md !== 'dual' && md !== 'quad' && md !== 'single') md = MODE;
+    var isDual = (md === 'dual'), isQuad = (md === 'quad');
     var symLen = Math.round(sr * symMs / 1000);
     var locLen = Math.round(sr * (locMs || 300) / 1000);
-    var pat = dual ? SYNC2 : SYNC;
+    var pat = isDual ? SYNC2 : (isQuad ? SYNC4 : SYNC);
     var total = locLen + pat.length * rounds * symLen;
     var x = new Float32Array(total);
     var step = TWO_PI / sr, p = 0, p1 = 0, p2 = 0;
-    var amp = dual ? GAIN * 0.5 : GAIN;
+    var amp = isDual ? GAIN * 0.5 : GAIN;
     /* 定位音：双音模式同时发「行0 + 列0」（18100 + 18900），两座峰相距 800 Hz；
-     * 单音模式发 tone0（18100）。收端量到绝对频率就能直接算缩放，不用猜。 */
-    var lt = dual ? pairTones(0) : [0];
+     * 单音/4 音模式只发 tone0（18100）——四音同时响会让峰值检测糊成一团，量不准。 */
+    var lt = isDual ? pairTones(0) : [0];
     var wl1 = step * toneFreq(band, lt[0]);
-    var wl2 = dual ? step * toneFreq(band, lt[1]) : 0;
+    var wl2 = isDual ? step * toneFreq(band, lt[1]) : 0;
     for (var q = 0; q < locLen; q++) {
-      x[p++] = dual ? (Math.sin(p1) + Math.sin(p2)) * amp : Math.sin(p1) * amp;
+      x[p++] = isDual ? (Math.sin(p1) + Math.sin(p2)) * amp : Math.sin(p1) * amp;
       p1 += wl1; if (p1 > TWO_PI) p1 -= TWO_PI;
-      if (dual) { p2 += wl2; if (p2 > TWO_PI) p2 -= TWO_PI; }
+      if (isDual) { p2 += wl2; if (p2 > TWO_PI) p2 -= TWO_PI; }
     }
     var glide = Math.max(1, Math.round(sr * GLIDE_MS / 1000));
     var pw1 = wl1, pw2 = wl2;
     var gl = Math.min(glide, Math.round(symLen / 4));
     for (var r = 0; r < rounds; r++) {
       for (var i = 0; i < pat.length; i++) {
-        var tt = dual ? pairTones(pat[i]) : [pat[i]];
+        var tt = isDual ? pairTones(pat[i]) : [pat[i]];
         var tw1 = step * toneFreq(band, tt[0]);
-        var tw2 = dual ? step * toneFreq(band, tt[1]) : 0;
+        var tw2 = isDual ? step * toneFreq(band, tt[1]) : 0;
         for (var n = 0; n < symLen; n++) {
           var u = (gl && n < gl) ? n / gl : 1;
           var w1 = gl && n < gl ? pw1 + (tw1 - pw1) * u : tw1;
-          x[p++] = dual
+          x[p++] = isDual
             ? (Math.sin(p1) + Math.sin(p2)) * amp
             : Math.sin(p1) * amp;
           p1 += w1; if (p1 > TWO_PI) p1 -= TWO_PI;
@@ -682,8 +763,13 @@ var GAIN = 0.72;          // 默认标准音量：够响，又不至于让喇叭
     this.band = band || BANDS[2];
     this.symMs = symMs || 16;
     this.symLen = Math.round(this.sr * this.symMs / 1000);
-    this.dual = (dual === undefined) ? (MODE === 'dual') : !!dual;
-    this.pat = this.dual ? SYNC2 : SYNC;
+    var md = (dual === undefined) ? MODE : (dual === true ? MODE : (dual === false ? 'single' : dual));
+    this.mode = md;
+    this.dual = (md === 'dual');
+    this.quad = (md === 'quad');
+    /* 每字节用几个符号：双音 2、单音 8 音 3（8/3 凑整成 3）、4 音 2bit 是 4 */
+    this.spb = this.dual ? 2 : (this.quad ? 4 : 3);
+    this.pat = this.dual ? SYNC2 : (this.quad ? SYNC4 : SYNC);
     this.cap = this.sr * 12;
     this.buf = new Float32Array(this.cap);
     this.fill = 0;
@@ -751,7 +837,10 @@ var GAIN = 0.72;          // 默认标准音量：够响，又不至于让喇叭
          * 回声里凑巧对齐的假位置，它会把后面的真包全部挡住、日志刷屏 LOCK。
          * 所以同一位置等超过 1.2 秒就以假锁处理：跳过这个同步头往后重扫。 */
         var _nowW = (typeof performance !== 'undefined' ? performance.now() : Date.now());
-        if (_nowW - (this._lockPosT || 0) > 1200) {
+        /* 只要「还有声音在进来」就不算假锁：实时播放时，这个包本来就要几秒才播完
+         * （quad/48ms 一包 90 符号 ≈ 4.3 秒），拿「等 1.2 秒还没到齐」当假锁会把真包跳过去。 */
+        var _idle = _nowW - (this._energyAt || 0);
+        if (_idle > 700 && _nowW - (this._lockPosT || 0) > 1200) {
           this.scanAbs = Math.max(this.scanAbs, this.syncAbs + symLen);
         }
         this.syncAbs = -1;
@@ -760,7 +849,12 @@ var GAIN = 0.72;          // 默认标准音量：够响，又不至于让喇叭
     }
     var step = Math.max(1, symLen >> 2);
     var start = Math.max(this.scanAbs, this.abs0);
-    var limit = this.abs0 + this.fill - (this.pat.length + 6) * symLen;
+    /* 扫描格点必须「锁死在 step 的整数倍」上。scanAbs 每次都从上一轮的 limit+1 起步，
+     * 而 limit 随 fill 一块一块往上涨，累下去就和符号边界错开 —— 24ms 时错个几百样本还能
+     * 靠判决窗兜住，48ms 一错就是一整个符号的 25%，同步头直接数不出命中（真机上「完全锁不上」
+     * 的成因之一）。贴到整格上，同一位置每轮看到的相位就完全一致。 */
+    if (step > 1) start = Math.ceil(start / step) * step;
+    var limit = this.abs0 + this.fill - (this.pat.length + Math.max(6, this.spb * 2)) * symLen;
 
     for (var a = start; a <= limit; a += step) {
       var off = a - this.abs0;
@@ -796,12 +890,12 @@ var GAIN = 0.72;          // 默认标准音量：够响，又不至于让喇叭
       // 锁上之后再估一次精确偏移（8 个已知同步音当标尺，精度到 0.05%）
       this.fScale = typeof this.forceScale === 'number' ? this.forceScale : this._estimateScale(refined, symLen, fs);
 
-      var lenNs = this.dual ? 4 : 6;
+      var lenNs = this.spb * 2;
       var lenSyms = new Uint8Array(lenNs);
       var lg = guardOf(symLen, this.sr), lw = symLen - lg;
       var CL = this.dual ? classifyDual : classify;
       for (var k = 0; k < lenNs; k++) lenSyms[k] = CL(this.buf, refined + (this.pat.length + k) * symLen + lg, lw, this.sr, this.band, this.fScale);
-      var lb = this.dual ? symbolsToBytes2(lenSyms) : symbolsToBytes(lenSyms);
+      var lb = this.dual ? symbolsToBytes2(lenSyms) : (this.quad ? symbolsToBytes4(lenSyms) : symbolsToBytes(lenSyms));
       var needLen = lb[0] | (lb[1] << 8);
       if (needLen <= 0 || needLen > this.maxPayload) continue;
 
@@ -809,7 +903,7 @@ var GAIN = 0.72;          // 默认标准音量：够响，又不至于让喇叭
       this._lockAt = (typeof performance !== 'undefined' ? performance.now() : Date.now());
       /* 同一位置反复重锁迟迟解不出 → 用来判定「假锁」，见上面等待分支。 */
       if (a2 !== this._lockPos) { this._lockPos = a2; this._lockPosT = this._lockAt; }
-      this.totalSyms = this.pat.length + (this.dual ? 2 : 3) * (2 + needLen + 2);
+      this.totalSyms = this.pat.length + this.spb * (2 + needLen + 2);
       this.scanAbs = a2;
       this.lastHits = ver;
       this._diag('lock', 'needLen=' + needLen + ' ver=' + ver);
@@ -817,6 +911,8 @@ var GAIN = 0.72;          // 默认标准音量：够响，又不至于让喇叭
       return;
     }
     this.scanAbs = Math.max(this.scanAbs, limit + 1);
+    /* 保持格点相位：下一轮从「最后一个 step 整数倍」继续，别把 phase 带歪。 */
+    if (step > 1) this.scanAbs = Math.ceil(this.scanAbs / step) * step;
   };
 
   /* 数同步头命中几个音（可按频率缩放判断），判决窗同样只取尾部。
@@ -1001,28 +1097,29 @@ var GAIN = 0.72;          // 默认标准音量：够响，又不至于让喇叭
     });
   };
 
-  /* 从同步头量出 8 条音各自的相对增益（SYNC2 每档音各覆盖两次）。
-   * 只在双音模式用；单音模式一次只响一条音，均衡没有意义。 */
+  /* 从同步头量出每条音各自的相对增益（双音的 SYNC2、4 音的 SYNC4 都保证每条音出现两次）。
+   * 单音 8 音的旧格式不做均衡（那时一次只响一条音，均衡没有意义）。 */
   StreamDecoder.prototype._syncGains = function (base, symLen, g) {
-    if (!this.dual) return null;
+    if (!this.dual && !this.quad) return null;
+    var N = nTones(this.band);
     var wl = symLen - g;
-    var acc = new Float64Array(TONES), cnt = new Uint8Array(TONES);
+    var acc = new Float64Array(N), cnt = new Uint8Array(N);
     for (var i = 0; i < this.pat.length; i++) {
       var off = Math.round(base + i * symLen) + g;
       if (off < 0 || off + wl > this.fill) return null;
-      var pr = pairTones(this.pat[i]);
-      for (var k = 0; k < 2; k++) {
-        var m = goertzel(this.buf, off, wl, toneFreq(this.band, pr[k], this.fScale), this.sr);
-        if (m > 0) { acc[pr[k]] += m; cnt[pr[k]]++; }
+      var ts = this.dual ? pairTones(this.pat[i]) : [this.pat[i]];
+      for (var k = 0; k < ts.length; k++) {
+        var m = goertzel(this.buf, off, wl, toneFreq(this.band, ts[k], this.fScale), this.sr);
+        if (m > 0) { acc[ts[k]] += m; cnt[ts[k]]++; }
       }
     }
     var lg = 0, n = 0, t;
-    for (t = 0; t < TONES; t++) if (cnt[t]) { lg += Math.log((acc[t] / cnt[t]) + 1e-12); n++; }
+    for (t = 0; t < N; t++) if (cnt[t]) { lg += Math.log((acc[t] / cnt[t]) + 1e-12); n++; }
     if (!n) return null;
     var ref = Math.exp(lg / n);
-    var gs = new Float64Array(TONES);
+    var gs = new Float64Array(N);
     var mx = -99, mn = 99;
-    for (t = 0; t < TONES; t++) {
+    for (t = 0; t < N; t++) {
       var a = cnt[t] ? acc[t] / cnt[t] : ref;
       var gg = ref / (a + 1e-12);
       if (gg < 0.25) gg = 0.25;
@@ -1136,7 +1233,8 @@ var GAIN = 0.72;          // 默认标准音量：够响，又不至于让喇叭
       this.scanAbs = Math.max(this.scanAbs, base + this.abs0 + symLen);
       return;
     }
-    var body = this.dual ? symbolsToBytes2(syms.subarray(this.pat.length)) : symbolsToBytes(syms.subarray(this.pat.length));
+    var body = this.dual ? symbolsToBytes2(syms.subarray(this.pat.length))
+      : (this.quad ? symbolsToBytes4(syms.subarray(this.pat.length)) : symbolsToBytes(syms.subarray(this.pat.length)));
     var payload = parsePacket(body);
     /* CRC 挂了先别急着判死：把缩放微调几档重读一遍。
      * 真机上「同步 8/8、平均边距 24 dB、CRC 却挂」最常见的成因就是缩放/节奏差了半个
@@ -1147,7 +1245,8 @@ var GAIN = 0.72;          // 默认标准音量：够响，又不至于让喇叭
       for (var t2 = 0; t2 < dsList.length && !payload; t2++) {
         var r2 = this._readGrid(base, symLen, g, gains, this.fScale * (1 + dsList[t2]));
         if (r2.hits < this.pat.length - 2) continue;
-        var b2 = this.dual ? symbolsToBytes2(r2.syms.subarray(this.pat.length)) : symbolsToBytes(r2.syms.subarray(this.pat.length));
+        var b2 = this.dual ? symbolsToBytes2(r2.syms.subarray(this.pat.length))
+          : (this.quad ? symbolsToBytes4(r2.syms.subarray(this.pat.length)) : symbolsToBytes(r2.syms.subarray(this.pat.length)));
         var p2 = parsePacket(b2);
         if (p2) {
           payload = p2; body = b2; syms = r2.syms;
@@ -1374,6 +1473,9 @@ var GAIN = 0.72;          // 默认标准音量：够响，又不至于让喇叭
     bytesToSymbols: bytesToSymbols, symbolsToBytes: symbolsToBytes,
     bytesToSymbols2: bytesToSymbols2, symbolsToBytes2: symbolsToBytes2,
     packetSymbols2: packetSymbols2, SYNC2: SYNC2, pairTones: pairTones,
+    bytesToSymbols4: bytesToSymbols4, symbolsToBytes4: symbolsToBytes4,
+    packetSymbols4: packetSymbols4, SYNC4: SYNC4, QBAND: QBAND, nTones: nTones,
+    makeWaveformQuad: makeWaveformQuad,
     classifyDual: classifyDual, classifyDualBest: classifyDualBest, dualMargin: dualMargin,
     setMode: setMode, getMode: getMode,
     makeWaveformDual: makeWaveformDual,
