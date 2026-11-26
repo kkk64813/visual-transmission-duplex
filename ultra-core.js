@@ -1007,7 +1007,7 @@ var GAIN = 0.72;          // 默认标准音量：够响，又不至于让喇叭
       this.errors++;
       this.stat.sync++;
       this._diag('sync', 'hits=' + hits + '/8 包内复检不过');
-      if (this.onError) this.onError('sync', this.lastMargin);
+      if (this.onError) { try { this.onError('sync', this.lastMargin); } catch (e1) {} }
       this.syncAbs = -1;
       this.scanAbs = Math.max(this.scanAbs, base + this.abs0 + symLen);
       return;
@@ -1019,7 +1019,7 @@ var GAIN = 0.72;          // 默认标准音量：够响，又不至于让喇叭
       this.stat.crc++;
       this._diag('crc', 'len=' + (body[0] | (body[1] << 8)) + ' crc=' + (body[2] | (body[3] << 8)) +
         ' sym0..3=' + syms[this.pat.length] + ',' + syms[this.pat.length + 1] + ',' + syms[this.pat.length + 2] + ',' + syms[this.pat.length + 3]);
-      if (this.onError) this.onError('crc', this.lastMargin);
+      if (this.onError) { try { this.onError('crc', this.lastMargin); } catch (e2) {} }
       // 失败只往后挪一个符号：回声里「差一点对齐」的位置常常是下一个才对得上的，整包跳过会把机会丢掉
       this.syncAbs = -1;
       this.scanAbs = Math.max(this.scanAbs, base + this.abs0 + symLen);
@@ -1028,7 +1028,15 @@ var GAIN = 0.72;          // 默认标准音量：够响，又不至于让喇叭
     this.packets++;
     this.stat.pk++;
     this._diag('ok', 'type=' + payload[0] + ' seq=' + payload[1] + '/' + payload[2] + ' n=' + payload.length);
-    if (this.onPacket) this.onPacket(payload, this.lastMargin);
+    /* 回调抛异常不能把解码器卡死在原地：以前 onPacket 里一句 ReferenceError
+     * 就能让「advance scanAbs」永远执行不到，同一个包被反复重新解出上百次，
+     * 后面的包一个都进不来（手机端「解出 0」就是这么来的）。 */
+    try {
+      if (this.onPacket) this.onPacket(payload, this.lastMargin);
+    } catch (err) {
+      this.stat.cbErr = (this.stat.cbErr || 0) + 1;
+      this._diag('err', '回调解出后报错：' + (err && err.message ? err.message : err));
+    }
     this.syncAbs = -1;
     /* 解成功的包，整段跳过。
      * 以前只跳同步头，结果同一个包会顺着扫描被反复「重新锁上、重新解出」：

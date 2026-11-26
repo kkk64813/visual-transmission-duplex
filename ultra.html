@@ -339,7 +339,7 @@
 /* ================= 版本 / 語系 / 彈窗 / 紀錄 =================
  * 這一層獨立於 App 內核之外：只碰 DOM，不碰音頻。
  * 目的：畫面乾淨、按鈕少、紀錄能一鍵帶走。 */
-var VER = { v: 'v2026-11-26k', t: '2026-11-26 15:33' };
+var VER = { v: 'v2026-11-26l', t: '2026-11-26 16:05' };
 
 /* ---------- 彈窗 ---------- */
 var Dlg = {
@@ -649,7 +649,7 @@ var Lang = (function () {
 })();
 </script>
 
-<script src="ultra-core.js?v=20261126k"></script>
+<script src="ultra-core.js?v=20261126l"></script>
 <script>
 var App = (function () {
   /* ===== 单档单速（2026-11-25 起）=====
@@ -1130,6 +1130,16 @@ var App = (function () {
     if (cnt) cnt.textContent = diagLines.length + ' 行';
   }
 
+  /* 计数器自增。这个函数在 v-k 里整段丢失过，导致 onPacket 第一行就抛
+   * ReferenceError：包其实解出来了，回调却在记数那一步炸掉，页面永远显示
+   * 「解出 0」，还一直给对端回零回执。 */
+  function inc(id) {
+    var el = $(id);
+    if (!el) return;
+    var v = parseInt(el.textContent, 10);
+    el.textContent = (isNaN(v) ? 0 : v) + 1;
+  }
+
   function pad(v, n) {
     v = v == null ? '' : String(v);
     while (v.length < n) v += ' ';
@@ -1217,12 +1227,14 @@ var App = (function () {
 
     tickN++;
     if (tickN % 2 === 0) {                     // 约每 0.17 秒刷一次，肉眼就是「实时」
-      var pk = Ultra.peakFreq(slice, sr, 16000, 23800, 80);
+      /* 只在当前音档的范围内找峰点。原来扫 16–23.8k，噪声里最高的点常在 21.5k，
+       * 屏幕上就像「本档一直有 21k 背景音」，其实是扫宽了。 */
+      var pk = Ultra.peakFreq(slice, sr, band.f0 - 120, band.f0 + band.df * 7 + 120, 80);
       var e2 = Ultra.bandEnergy(slice, sr, band);
       var fl2 = gateLatestE.floor || 0;
       var snr2 = fl2 > 0 ? 10 * Math.log10(Math.max(e2.peak, 1e-18) / fl2) : 0;
       lastSnr = snr2; window.__snr = snr2;
-      var hot2 = gateOn.mid && snr2 > 3 && pk.f > 0;
+      var hot2 = gateOn.mid && snr2 > 3 && e2.ratio >= 2 && pk.f > 0;
       var el = $('dPeak');
       if (el) {
         el.textContent = hot2 ? pk.f : '—';
@@ -1254,14 +1266,16 @@ var App = (function () {
       if (val) val.textContent = lvl2 + '%';
     }
     tickN++;
-    var pk = Ultra.peakFreq(slice, sr, 16000, 23800, 80);
+    var pk = Ultra.peakFreq(slice, sr, band.f0 - 120, band.f0 + band.df * 7 + 120, 80);
     /* 只有「确实比底噪高」才算听到，否则一律显示 —— 。
      * 没有信号时 peakFreq 也会返回一个最大值的频率（噪声里总有个最高的点），
-     * 过去把它原样印出来，看起来就像「18k 一直有背景音」。 */
+     * 过去把它原样印出来，看起来就像「18k 一直有背景音」。
+     * 除 dB 之外还要看「峰/均值」比：噪声里 8 个音差不多平，比值接近 1.5~2；
+     * 真收到音时某一个音会明显突出，比值会到 3 以上。 */
     var fl = gateLatestE.floor || 0;
     var snr = fl > 0 ? 10 * Math.log10(Math.max(e.peak, 1e-18) / fl) : 0;
     lastSnr = snr; window.__snr = snr;
-    var hot = gateOn.mid && snr > 3 && pk.f > 0;
+    var hot = gateOn.mid && snr > 3 && e.ratio >= 2 && pk.f > 0;
     var el = $('dPeak');
     if (el) {
       el.textContent = hot ? pk.f : '—';
