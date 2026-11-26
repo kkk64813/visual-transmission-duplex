@@ -339,7 +339,7 @@
 /* ================= 版本 / 語系 / 彈窗 / 紀錄 =================
  * 這一層獨立於 App 內核之外：只碰 DOM，不碰音頻。
  * 目的：畫面乾淨、按鈕少、紀錄能一鍵帶走。 */
-var VER = { v: 'v2026-11-26t', t: '2026-11-26 17:40' };
+var VER = { v: 'v2026-11-26u', t: '2026-11-26 18:05' };
 
 /* ---------- 彈窗 ---------- */
 var Dlg = {
@@ -494,7 +494,10 @@ window.REC = (function () {
     else if (h >= 1) s.push('· 同步只命中 ' + h + '/8（不足 6）：頻率縮放或符號時長對不上，先看「縮放」是否偏離 1.000 超過 1.5%。');
     else s.push('· 同步命中 0/8：收端完全沒形成候選。要嘛音量太小、要嘛峰值頻率與 18100 差太遠（喇叭/麥克風凹陷），要嘛雙音的某一路被吃掉。');
 
-    if (med && Math.abs(med - 18100) > 350) s.push('· 峰值頻率中位 ' + med + 'Hz，離 18100 差 ' + Math.abs(med - 18100) + 'Hz：這一檔在該裝置上不響，換單音/換音量或換裝置再試。');
+    /* 峰值頻率現在是「全頻段真實峰點」，安靜房間裡常見一兩百赫的環境低頻。
+     * 只有讀數真的落在超聲段時，才能拿它去說「這一檔不響」。 */
+    if (med >= 15000 && Math.abs(med - 18100) > 350) s.push('· 峰值頻率中位 ' + med + 'Hz，離 18100 差 ' + Math.abs(med - 18100) + 'Hz：這一檔在該裝置上不響，換單音/換音量或換裝置再試。');
+    else if (med && med < 15000 && n === 0) s.push('· 環境最強音一直在 ' + med + 'Hz（非超聲段）：這 90 秒裡沒有超聲訊號進來，先確認對端真的在發、且兩端音量都開著。');
     if (rx.crc) s.push('· CRC 失敗 ' + rx.crc + ' 次：已解到包但符號有錯，屬時序漂移/邊界判錯，延長符號或提高音量。');
     if (dec > 0 && n === 0) s.push('· 統計顯示「解出 ' + dec + '」卻沒有包記錄：舊計數殘留，重開頁面再看。');
     var drop = document.getElementById('dDrop');
@@ -649,7 +652,7 @@ var Lang = (function () {
 })();
 </script>
 
-<script src="ultra-core.js?v=20261126t"></script>
+<script src="ultra-core.js?v=20261126u"></script>
 <script>
 var App = (function () {
   /* ===== 单档单速（2026-11-25 起）=====
@@ -1302,12 +1305,12 @@ var App = (function () {
 
   function paintBar(best) {
     /* 纯噪声下这个比值实测能到 12–14 dB，所以 14 dB 以内一律 0，14→30 dB 映射到 0→100%。
-     * 另加「连续两帧都过线」：单帧的尖峰（拍桌子、说话、手指碰麦）只能骗过一帧，
-     * 真在发双音时每帧都有 2 条音在响，绝不会只热一帧。 */
+     * 只按单帧判：短 Ping（1.2 秒）在手机上也就十几帧，再要求「连续两帧」会把
+     * 探测音漏掉一半；尖峰误闪的代价是条子抖一下，比漏掉真信号划算。
+     * 真正要防的是「没有新帧却顶在满格」，那由下面的 meterWatch 处理。 */
     barDb.hf = best;
-    if (best > 14) hotN++; else hotN = 0;
-    var tgt = 0;
-    if (hotN >= 2) tgt = Math.max(0, Math.min(100, Math.round((best - 14) / 16 * 100)));
+    hotN = 0;
+    var tgt = best <= 14 ? 0 : Math.max(0, Math.min(100, Math.round((best - 14) / 16 * 100)));
     paintPct(tgt);
   }
 
@@ -1344,29 +1347,68 @@ var App = (function () {
       var fl2 = gateLatestE.floor || 0;
       var snr2 = fl2 > 0 ? 10 * Math.log10(Math.max(e2.peak, 1e-18) / fl2) : barDb.hf || 0;
       lastSnr = snr2; window.__snr = snr2;
-      showFreq(snr2 > 3, pk, pair2, snr2);
+      showFreq(snr2 > 3, pk, pair2, snr2, slice, sr);
       updateDbg();
     }
     maybeAck();
   }
 
-  /* 大字号频率：双音显示「行音 · 列音」，单音显示峰点。
-   * 本档没信号、但整段超声范围里有东西（比如对端在 20.5k 上发回执）时，
-   * 也要把那个频率报出来 —— 否则用户只看到「安靜」而条子在动，会以为页面坏了。 */
-  function showFreq(hot, pk, pair, db) {
+  /* 大字号频率：显示「当下真正的峰点」。
+   * 以前只在本档 18.1–19.5k 里找峰，安静时噪声在那一段挑出个最大值乱跳，
+   * 屏幕上就一直闪 22.3k / 18.1k 这种根本没在响的数字。
+   * 现在扫全频段（60 Hz–23.8k），环境里最响的就是最响的：安静房间多半是
+   * 一两百赫的低频嗡嗡声，那就老实显示 180 Hz —— 低于超声也照实说。 */
+  var trueF = 0, trueFC = 0, trueFN = 0;
+
+  function peakAllFreq(x, sr) {
+    var n = Math.min(x.length, Math.round(sr * 0.045)), off = x.length - n;
+    if (n < 64) return { f: 0, v: 0, med: 0 };
+    var best = { f: 0, v: -1 }, f, m, all = [];
+    for (f = 80; f <= 23800; f += 300) { m = Ultra.goertzel(x, off, n, f, sr); all.push(m); if (m > best.v) best = { f: f, v: m }; }
+    if (best.v <= 0) return { f: 0, v: best.v, med: 0 };
+    all.sort(function (a, b) { return a - b; });
+    var med = all[Math.floor(all.length / 2)] || 0;
+    var lo = Math.max(60, best.f - 300), hi = Math.min(23800, best.f + 300);
+    for (f = lo; f <= hi; f += 20) { m = Ultra.goertzel(x, off, n, f, sr); if (m > best.v) best = { f: f, v: m }; }
+    return { f: best.f, v: best.v, med: med };
+  }
+
+  function showFreq(hot, pk, pair, db, slice, sr) {
     var el = $('dPeak'), lv = $('rxNow');
     var dual = dualOn();
-    var wide = lastScan.db > 6 && lastScan.f > 0;
+    var tp = slice ? peakAllFreq(slice, sr) : { f: 0, v: 0, med: 0 };
+    /* 「听得到」= 峰点比同一次扫描的中位数高 30 倍（约 15 dB）。
+     * 只用绝对电平不行：Goertzel 的幅值随频率不同量纲不一样，
+     * 低音一百赫兹和十八千赫同样的声压读数差一个数量级，用固定门就会一边漏、一边乱报。
+     * 白噪声实测这个比值只有 4–11，任一格都能过 15 dB 才是真的有音在响。 */
+    var ratio = tp.med > 0 ? tp.v / tp.med : 0;
+    var tonal = tp.v > 0 && ratio >= 30;
+    /* 防抖：同一个新峰要连着两帧都算出来才改字，否则保持上一帧。 */
+    if (tp.f && tonal) {
+      if (tp.f === trueFC) trueFN++; else { trueFC = tp.f; trueFN = 1; }
+      if (!trueF || trueFN >= 2) trueF = tp.f;
+    }
+    var heard = tonal && trueF;
+    var hf = trueF >= 17000;
     if (el) {
-      var txt = hot ? (dual ? (pair.row + ' · ' + pair.col) : pk.f) : (wide ? lastScan.f : '—');
-      el.textContent = txt;
-      el.style.fontSize = hot ? (dual ? '26px' : '38px') : (wide ? '26px' : '22px');
-      el.style.color = (hot || wide) ? 'var(--accent-2)' : 'var(--muted)';
+      if (hot) {
+        el.textContent = dual ? (pair.row + ' · ' + pair.col) : pk.f;
+        el.style.fontSize = dual ? '26px' : '38px';
+        el.style.color = 'var(--accent-2)';
+      } else if (heard) {
+        el.textContent = trueF;
+        el.style.fontSize = '34px';
+        el.style.color = hf ? 'var(--accent-2)' : 'var(--muted)';
+      } else {
+        el.textContent = '—';
+        el.style.fontSize = '22px';
+        el.style.color = 'var(--muted)';
+      }
     }
     if (lv) {
       if (hot) lv.textContent = dual ? ('雙音 +' + db.toFixed(0) + ' dB · 行 ' + pair.row + ' / 列 ' + pair.col)
         : (pk.f + ' Hz · +' + db.toFixed(0) + ' dB');
-      else if (wide) lv.textContent = '本檔沒訊號 · ' + lastScan.f + ' Hz 有 +' + lastScan.db.toFixed(0) + ' dB';
+      else if (heard) lv.textContent = '即時峰值 · ' + (hf ? '超聲段' : '非超聲（環境聲）') + ' · 音量條看能量高低';
       else lv.textContent = '安靜';
     }
   }
@@ -1391,7 +1433,7 @@ var App = (function () {
     lastSnr = snr; window.__snr = snr;
     /* 门限只用来决定「大字要不要印具体数字」，音量条不受它影响。 */
     var hot = snr > 3;
-    showFreq(hot, pk, pair, snr);
+    showFreq(hot, pk, pair, snr, slice, sr);
     /* 手机屏幕上必须能直接看出「同步头到底命中了几个」——这是「听到了却解不出」唯一的判据。
      * 0/8：解码器根本没形成候选（多半是缩放/节奏对不上）；6~7/8：锁门开得太严。 */
     if (decoders.length && decoders[0].scanBest) {
@@ -1517,7 +1559,13 @@ var App = (function () {
    * 这样发端在「播音」时条子也在动 —— 不依赖麦克风有没有开。 */
   var outAnalyser = null, outTimer = null;
   function outPeakOnce() {
-    if (!outAnalyser) return;
+    var busy = typeof window.tx === 'object' && window.tx && window.tx.busy;
+    if (!outAnalyser) {
+      /* 没有 analyser（比如页面刚建好就点了 Ping）时，直接按播放器算出的峰值画条，
+       * 不然发端播音时条子一动不动。 */
+      if (busy && typeof window.tx.levelDb === 'number') paintTxLevel();
+      return;
+    }
     var n = outAnalyser.fftSize || 4096;
     var buf = new Float32Array(n);
     outAnalyser.getFloatTimeDomainData(buf);
@@ -1531,12 +1579,19 @@ var App = (function () {
       el.style.fontSize = pk.v > 1e-6 ? '38px' : '22px';
       el.style.color = pk.f >= 17500 ? 'var(--accent-2)' : (pk.v > 1e-6 ? '#c0392b' : 'var(--muted)');
     }
-    var busy = typeof window.tx === 'object' && window.tx && window.tx.busy;
     if (busy && amp > 1e-5) {
       var nm = $('nm-hf'); if (nm) nm.textContent = '播音';
       lastScan = { f: pk.f, v: amp, db: -99 };
       var db = 20 * Math.log10(amp);
       paintPct(db <= -60 ? 0 : Math.min(100, Math.round((db + 60) / 54 * 100)));
+      /* 播音时大字也报「正在放出去的那个频率」，不是噪声里挑出来的数。 */
+      var dEl = $('dPeak'), dlv = $('rxNow');
+      if (dEl && pk.v > 1e-6) {
+        dEl.textContent = pk.f;
+        dEl.style.fontSize = '34px';
+        dEl.style.color = 'var(--accent-2)';
+        if (dlv) dlv.textContent = '播音中 · ' + pk.f + ' Hz · 音量條=播出音量';
+      }
     } else if (!busy) {
       var nm2 = $('nm-hf'); if (nm2) nm2.textContent = '收音';
     }
