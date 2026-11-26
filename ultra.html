@@ -339,7 +339,7 @@
 /* ================= 版本 / 語系 / 彈窗 / 紀錄 =================
  * 這一層獨立於 App 內核之外：只碰 DOM，不碰音頻。
  * 目的：畫面乾淨、按鈕少、紀錄能一鍵帶走。 */
-var VER = { v: 'v2026-11-26r', t: '2026-11-26 17:05' };
+var VER = { v: 'v2026-11-26s', t: '2026-11-26 17:25' };
 
 /* ---------- 彈窗 ---------- */
 var Dlg = {
@@ -649,7 +649,7 @@ var Lang = (function () {
 })();
 </script>
 
-<script src="ultra-core.js?v=20261126r"></script>
+<script src="ultra-core.js?v=20261126s"></script>
 <script>
 var App = (function () {
   /* ===== 单档单速（2026-11-25 起）=====
@@ -731,7 +731,7 @@ var App = (function () {
      * 只要「对面在发东西」这根条就该动。 */
     var d = document.createElement('div');
     d.className = 'meter';
-    d.innerHTML = '<span class="nm">超聲波 17–24k</span><span class="bar"><i id="bar-hf"></i></span><span class="vl" id="val-hf">0%</span>';
+    d.innerHTML = '<span class="nm" id="nm-hf">收音</span><span class="bar"><i id="bar-hf"></i></span><span class="vl" id="val-hf">0%</span>';
     m.appendChild(d);
   }
 
@@ -1236,9 +1236,12 @@ var App = (function () {
     var scan = Ultra.bandScan(slice, sr, HF_LO, HF_HI, 100);
     var map = {}, peakAll = 0, i;
     for (i = 0; i < scan.length; i++) { map[scan[i].f] = scan[i].v; if (scan[i].v > peakAll) peakAll = scan[i].v; }
+    /* 本机正在播音（回执/标尺/数据包）：条子直接画「我要播出去的声音有多大」。
+     * 麦克风门不一定开着，播出去多大自己是知道的；这样发端、收端在发送时也能看到条子在动。 */
+    if (txPlaying()) { paintTxLevel(); return; }
     /* 麦克风被系统静音/页面被冻结时，采集缓冲会是整段 0：这时候任何比值都是「0/0」的
      * 数字噪声，几条音格的残值一比音间格就冒出十几二十 dB。先按绝对电平挡住。 */
-    if (peakAll < 1e-9 || (typeof window.tx === 'object' && window.tx && window.tx.busy)) { lastScan = { f: 0, v: 0, db: -99 }; paintBar(-99); return; }
+    if (peakAll < 1e-9) { lastScan = { f: 0, v: 0, db: -99 }; var nmz = $('nm-hf'); if (nmz) nmz.textContent = '收音'; paintPct(0); return; }
     var best = -99, bestF = 0, bestV = 0;
     var bands = Ultra.BANDS || [];
     for (var bi = 0; bi < bands.length; bi++) {
@@ -1264,15 +1267,32 @@ var App = (function () {
       if (d > best) { best = d; bestF = topF; bestV = topV; }
     }
     lastScan = { f: bestF, v: bestV, db: best };
+    var nmx = $('nm-hf'); if (nmx) nmx.textContent = '收音';
     paintBar(best);
+  }
+
+  function txPlaying() {
+    return typeof window.tx === 'object' && window.tx && window.tx.busy && typeof window.tx.levelDb === 'number';
+  }
+
+  function paintTxLevel() {
+    var nm = $('nm-hf'); if (nm) nm.textContent = '播音';
+    var db = window.tx.levelDb;
+    lastScan = { f: 0, v: 0, db: -99 };
+    paintPct(db <= -60 ? 0 : Math.min(100, Math.round((db + 60) / 54 * 100)));
   }
 
   function paintBar(best) {
     /* 纯噪声下这个比值实测能到 12–14 dB，所以 14 dB 以内一律 0，14→30 dB 映射到 0→100%。 */
+    barDb.hf = best;
     var tgt = best <= 14 ? 0 : Math.max(0, Math.min(100, Math.round((best - 14) / 16 * 100)));
+    paintPct(tgt);
+  }
+
+  function paintPct(tgt) {
     var prev = barLv.hf || 0;
     prev = tgt > prev ? tgt : prev * 0.72 + tgt * 0.28;   // 起得快、落得慢，肉眼才像「在抖」
-    barLv.hf = prev; barDb.hf = best;
+    barLv.hf = prev;
     var bar = $('bar-hf'), val = $('val-hf');
     if (bar) bar.style.width = Math.round(prev) + '%';
     if (val) val.textContent = Math.round(prev) + '%';
@@ -1462,7 +1482,8 @@ var App = (function () {
     });
   }
 
-  /* 发送端自检：量自己的喇叭到底在放几千赫 */
+  /* 发送端自检：量自己的喇叭到底在放几千赫，同时把这声音的大小画到音量条上。
+   * 这样发端在「播音」时条子也在动 —— 不依赖麦克风有没有开。 */
   var outAnalyser = null, outTimer = null;
   function outPeakOnce() {
     if (!outAnalyser) return;
@@ -1471,11 +1492,22 @@ var App = (function () {
     outAnalyser.getFloatTimeDomainData(buf);
     var sr = ctx ? ctx.sampleRate : 48000;
     var pk = Ultra.peakFreq(buf, sr, 16000, 24000, 80);
+    var amp = 0, i;
+    for (i = 0; i < n; i++) { var a = buf[i] < 0 ? -buf[i] : buf[i]; if (a > amp) amp = a; }
     var el = $('sOut');
     if (el) {
       el.textContent = pk.v > 1e-6 ? pk.f : '—';
       el.style.fontSize = pk.v > 1e-6 ? '38px' : '22px';
       el.style.color = pk.f >= 17500 ? 'var(--accent-2)' : (pk.v > 1e-6 ? '#c0392b' : 'var(--muted)');
+    }
+    var busy = typeof window.tx === 'object' && window.tx && window.tx.busy;
+    if (busy && amp > 1e-5) {
+      var nm = $('nm-hf'); if (nm) nm.textContent = '播音';
+      lastScan = { f: pk.f, v: amp, db: -99 };
+      var db = 20 * Math.log10(amp);
+      paintPct(db <= -60 ? 0 : Math.min(100, Math.round((db + 60) / 54 * 100)));
+    } else if (!busy) {
+      var nm2 = $('nm-hf'); if (nm2) nm2.textContent = '收音';
     }
   }
 

@@ -1295,6 +1295,11 @@ var GAIN = 0.72;          // 默认标准音量：够响，又不至于让喇叭
     src.buffer = buf;
     src.connect(self.out || self.ctx.destination);
     self.busy = true;
+    /* 记下这一段的峰值电平（dBFS），页面在播音期间用它画音量条：
+     * 麦克风门不一定开着，但要播的声音有多大自己是知道的。 */
+    var pk = 0;
+    for (var i = 0; i < samples.length; i += 4) { var a = Math.abs(samples[i]); if (a > pk) pk = a; }
+    self.levelDb = 20 * Math.log10(pk + 1e-12);
     self._src = src;
     var done = function () {
       if (fired) return;          // onended 和兜底 setTimeout 都会来，只能算一次
