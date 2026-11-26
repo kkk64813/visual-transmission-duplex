@@ -339,7 +339,7 @@
 /* ================= 版本 / 語系 / 彈窗 / 紀錄 =================
  * 這一層獨立於 App 內核之外：只碰 DOM，不碰音頻。
  * 目的：畫面乾淨、按鈕少、紀錄能一鍵帶走。 */
-var VER = { v: 'v2026-11-26q', t: '2026-11-26 16:55' };
+var VER = { v: 'v2026-11-26r', t: '2026-11-26 17:05' };
 
 /* ---------- 彈窗 ---------- */
 var Dlg = {
@@ -649,7 +649,7 @@ var Lang = (function () {
 })();
 </script>
 
-<script src="ultra-core.js?v=20261126q"></script>
+<script src="ultra-core.js?v=20261126r"></script>
 <script>
 var App = (function () {
   /* ===== 单档单速（2026-11-25 起）=====
@@ -1376,7 +1376,7 @@ var App = (function () {
     /* 自动校准：监听中、且已经 0.7 秒没解出过任何包，就自己量一次频率 ——
      * 不用人按按钮。对端每次发送前都会先播标尺音，正好给这一步提供干净的素材。
      * 节流 0.9 秒一次；量不通就保持原值（不用噪声去「校」出个偏移）。 */
-    if (running && now() - lastCalAt > 900 && now() - lastPktAt > 700) {
+    if (running && !(typeof window.tx === 'object' && window.tx && window.tx.busy) && (window.__snr || 0) > 10 && now() - lastCalAt > 900 && now() - lastPktAt > 700) {
       lastCalAt = now();
       autoCalSilent();
     }
