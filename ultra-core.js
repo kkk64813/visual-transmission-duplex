@@ -116,7 +116,7 @@ var GAIN = 0.72;          // 默认标准音量：够响，又不至于让喇叭
 
   function ackPayload(round, total, have, diag) {
     var n = Math.ceil(Math.min(total, ACK_MAX) / 8) || 1;
-    var b = new Uint8Array(4 + n + (diag ? 2 : 0));
+    var b = new Uint8Array(4 + n + (diag ? 3 : 0));
     b[0] = T_ACK;
     b[1] = round & 0xff;
     b[2] = total & 0xff;
@@ -127,8 +127,10 @@ var GAIN = 0.72;          // 默认标准音量：够响，又不至于让喇叭
     if (diag) {
       var h = Math.max(0, Math.min(15, Math.round(+diag.hits || 0)));
       var mg = Math.max(-16, Math.min(46, +diag.margin || 0));
+      var lv = Math.max(-40, Math.min(46, diag.level == null ? -40 : +diag.level));
       b[4 + n] = h;
       b[5 + n] = Math.round((mg + 16) / 2) & 0x1f;        // -16..+46 dB → 0..31，2 dB 一格
+      b[6 + n] = Math.round((lv + 40) / 3) & 0x1f;        // -40..+46 dB → 0..31，3 dB 一格
     }
     return b;
   }
@@ -142,7 +144,8 @@ var GAIN = 0.72;          // 默认标准音量：够响，又不至于让喇叭
     function has(i) { return i < total && (i >> 3) < n && !!(bits[i >> 3] & (1 << (i & 7))); }
     var diag = null;
     if (payload.length >= 6 + n) {
-      diag = { hits: payload[4 + n] & 15, margin: (payload[5 + n] & 31) * 2 - 16 };
+      diag = { hits: payload[4 + n] & 15, margin: (payload[5 + n] & 31) * 2 - 16, level: -40 };
+      if (payload.length >= 7 + n) diag.level = (payload[6 + n] & 31) * 3 - 40;
     }
     return {
       round: payload[1],

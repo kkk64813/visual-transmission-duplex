@@ -334,7 +334,7 @@
 /* ================= 版本 / 語系 / 彈窗 / 紀錄 =================
  * 這一層獨立於 App 內核之外：只碰 DOM，不碰音頻。
  * 目的：畫面乾淨、按鈕少、紀錄能一鍵帶走。 */
-var VER = { v: 'v2026-11-26d', t: '2026-11-26 09:44' };
+var VER = { v: 'v2026-11-26e', t: '2026-11-26 09:48' };
 
 /* ---------- 彈窗 ---------- */
 var Dlg = {
@@ -356,7 +356,7 @@ document.addEventListener('click', function (e) {
 /* ---------- 雙向紀錄 ---------- */
 window.REC = (function () {
   var lines = [], diags = [], snaps = [];
-  var rx = { pkts: 0, bytes: 0, first: 0, last: 0, maxHits: 0, crc: 0, err: 0, peak: [], scale: null, peer: null, online: 0 };
+  var rx = { pkts: 0, bytes: 0, first: 0, last: 0, maxHits: 0, crc: 0, err: 0, peak: [], scale: null, peer: null, online: 0, pre: '' };
   var tx = { done: 0, bytes: 0, secs: 0, ok: null, rounds: 0 };
   var T0 = new Date();
 
@@ -451,7 +451,8 @@ window.REC = (function () {
       out.push('RX 峰值頻率 中位=' + xs[Math.floor(xs.length / 2)] + 'Hz 區間=' + xs[0] + '–' + xs[xs.length - 1] + 'Hz');
     }
     out.push('對方在線=' + (rx.online ? '是（收到就緒握手）' : '否（沒收到就緒握手）'));
-    if (rx.peer) out.push('對方觀測（隨回執帶回）同步最好=' + rx.peer.hits + '/8 · 邊距=' + rx.peer.margin + ' dB');
+    if (rx.peer) out.push('對方觀測（隨回執帶回）同步最好=' + rx.peer.hits + '/8 · 邊距=' + rx.peer.margin + ' dB · 對方聽到的 SNR=' + rx.peer.level + ' dB');
+    out.push('雙向預檢=' + (rx.pre || '未做'));
     if (tx.done) out.push('TX 最後一次=' + (tx.ok ? '成功' : '未確認') + ' ' + tx.bytes + 'B /' + tx.secs.toFixed(1) + 's = ' +
       (tx.secs > 0 ? (tx.bytes / tx.secs).toFixed(1) : 0) + ' B/s · ' + tx.rounds + ' 輪');
 
@@ -495,7 +496,7 @@ window.REC = (function () {
 
   function clear() {
     lines = []; diags = []; snaps = [];
-    rx = { pkts: 0, bytes: 0, first: 0, last: 0, maxHits: 0, crc: 0, err: 0, peak: [], scale: null, peer: null, online: 0 };
+    rx = { pkts: 0, bytes: 0, first: 0, last: 0, maxHits: 0, crc: 0, err: 0, peak: [], scale: null, peer: null, online: 0, pre: '' };
     tx = { done: 0, bytes: 0, secs: 0, ok: null, rounds: 0 };
     var a = document.getElementById('log'), b = document.getElementById('logTx');
     if (a) a.textContent = ''; if (b) b.textContent = '';
@@ -634,7 +635,7 @@ var Lang = (function () {
 })();
 </script>
 
-<script src="ultra-core.js?v=20261126d"></script>
+<script src="ultra-core.js?v=20261126e"></script>
 <script>
 var App = (function () {
   /* ===== 单档单速（2026-11-25 起）=====
@@ -749,14 +750,24 @@ var App = (function () {
       if ($('dGate')) $('dGate').textContent = '量底噪… ' + gateWarm + '/5';
       return;
     }
-    /* 地板快降慢升：比地板小就立刻跟着降，比地板大只允许每次抬 2%，
-     * 这样持续发包时地板不会一路追到信号电平上把门关死。 */
+    /* 地板只用来分辨「有没有在发声」，不追信号电平。
+     * 旧写法「比地板大就每次抬 2%」，在自己连续播放（或对方回执连着播）时会把
+     * 已经播出的声音一路当成背景音，地板追上去以后闸门就再也打不开 —— 这就是
+     * 「播放中的声音被当成底噪」的根因。18 kHz 以上环境声本来就少，所以这里改成：
+     *   变小时立刻跟着降；变大时只有「明确安静」才极慢上抬；一旦确认为信号就冻结。 */
     var f = gateFloorDb.mid;
-    if (f == null || eMid < f) f = eMid;
-    else f = Math.min(eMid, f * 1.02);
+    if (f == null) f = eMid;
+    else if (eMid < f) f = eMid;                          // 立刻下探，跟着环境降
+    else if (tx && tx.busy) { /* 自己喇叭在响：地板完全冻结 */ }
+    else if (eMid < f * 1.6) f = f * 1.002;               // 安静时才允许极慢回抬
+    else if (eMid < f * 6) f = Math.min(eMid, f * 1.002); // 有点吵但不像信号：照样很慢
+    /* eMid ≥ f*6 → 当作信号：地板冻结，不动 */
     gateFloorDb.mid = f;
     gateOn.mid = eMid > Math.max(f * 2.5, 1e-9);
     if (gateOn.mid) gateHold.mid = performance.now();
+    /* SNR（相对地板）只用于回执 diag：让发端知道「对方听到我多响」，而不是靠猜 */
+    var snrDb = 10 * Math.log10(Math.max(eMid, 1e-18)) - 10 * Math.log10(Math.max(f, 1e-18));
+    if (snrDb > rxSnrMax) rxSnrMax = snrDb;
     /* 刚刚有声、现在判断成静音 → 再放行 400ms，避免包和包之间的缝隙把锁弄断。 */
     if (!gateOn.mid && gateHold.mid && performance.now() - gateHold.mid < 400) gateOn.mid = true;
     var now = performance.now();
@@ -771,8 +782,8 @@ var App = (function () {
 
   /* 本机（收端）看到的最好的同步命中 —— 随回执带回去给发端，发端那份日志因此
    * 同时包含「我发了什么」和「对方听到什么」，一个文件就能定位问题。 */
-  var rxBest = { hits: 0, margin: 0 };
-  function rxDiag() { return { hits: rxBest.hits, margin: rxBest.margin }; }
+  var rxBest = { hits: 0, margin: 0 }, rxSnrMax = 0;
+  function rxDiag() { return { hits: rxBest.hits, margin: rxBest.margin, level: Math.round(rxSnrMax) }; }
 
   /* ---------- 接收 ---------- */
   function makeDecoders(sr) {
@@ -1404,8 +1415,10 @@ var App = (function () {
     var b = Ultra.bandByKey(ACK_BAND);
     var e = Ultra.bandEnergy(c, sr, b).peak;
     var db = 10 * Math.log10(e + 1e-18);
+    /* 地板同样「只跟着安静降、绝不追着信号涨」：对方回执一响就是十几 dB，
+     * 旧写法在这种持续播放里会把地板抬到信号附近，之后自然判成「安静」。 */
     if (ackFloorDb == null || db < ackFloorDb) ackFloorDb = db;
-    else ackFloorDb = ackFloorDb * 0.99 + db * 0.01;
+    else if (!(tx && tx.busy) && db < ackFloorDb + 6) ackFloorDb = ackFloorDb * 0.995 + db * 0.005;
     var rel = db - ackFloorDb;
     ackLastDb = rel;
     var amp = 2 * Math.sqrt(Math.max(0, e)) / Math.min(c.length, Math.round(sr * 0.08));
@@ -1511,6 +1524,43 @@ var App = (function () {
     });
   }
 
+  /* ---------- 開傳前的雙向預檢 ----------
+   * 以前直接就開跑，出問題才在日誌裡猜是「對方不在」「對方聽不到」還是「聽得到解不開」。
+   * 現在先播一次標尺（對方會自動校準、並回一條就緒/零回執），用那條回執同時驗證三件事：
+   *   ① 對方在線且自動回執開著　② 反向通道（手機→電腦）解得開　③ 對方聽到的 SNR 有多少
+   * ③ 是過去完全看不到的量：它是「電腦喇叭→手機麥克風」這一段唯一的量化證據。 */
+  function preflight(waitMs, done) {
+    ensureCtx();
+    rxSnrMax = 0; rxBest.hits = 0; rxBest.margin = 0;
+    var b = Ultra.bandByKey(ONE_BAND), sp = ONE_SP;
+    var seg = Ultra.makeRuler(ctx.sampleRate, b, sp, 4, 300, dualOn());
+    log('預檢①：播 1.07s 標尺（對方會自動校準，並回一條就緒回執）');
+    ackMeterReset();
+    tx.send(seg, b, sp, function () {
+      log('預檢②：等對方回執（' + Math.round((waitMs || 6000) / 1000) + ' 秒）…');
+      ackListen(waitMs || 6000, function (ack) {
+        if (!ack) {
+          rx.pre = '未通過（對方無回執）';
+          log('預檢未通過：對方沒有任何回執 —— 手機沒在監聽、沒開自動回執、音量為 0 或距離太遠。' +
+            '這一輪仍會發，但大概率收不到', '#b4791f');
+          done(false);
+          return;
+        }
+        var dg = ack.diag;
+        if (dg) {
+          rx.pre = '通過 · 對方 SNR +' + dg.level + ' dB · 同步 ' + dg.hits + '/8';
+          log('預檢通過｜對方在線 · 對方聽到的 18.1k SNR +' + dg.level + ' dB · 對方同步 ' + dg.hits + '/8 · 邊距 ' + dg.margin + ' dB', '#0a5f4f');
+          if (dg.level < 6) log('預檢提醒：對方聽到的量只有 +' + dg.level + ' dB，偏弱。兩台靠近些、或把系統音量調大再發', '#b4791f');
+          else if (dg.level > 26) log('預檢提醒：對方聽到的量 +' + dg.level + ' dB 很足' + (dg.hits === 0 ? '，但同步沒對上 —— 是頻率/時長問題，不是音量問題' : ''), '#b4791f');
+        } else {
+          rx.pre = '通過（對方未帶觀測）';
+          log('預檢通過：收到對方回執（對方未帶觀測資料，可能是舊頁面）', '#0a5f4f');
+        }
+        done(true);
+      });
+    });
+  }
+
   function sendReliable(packets, onProgress, onDone) {
     var tok = ++sendSeq;                 // 每次发送一个令牌：旧链的回调一律作废，不许再往下跑
     var round = 1, MAX_ROUNDS = 6;
@@ -1518,6 +1568,7 @@ var App = (function () {
     for (var q = 0; q < packets.length; q++) bytes += (packets[q].data ? packets[q].data.length : 0) + 4;
     var pending = [];
     for (var i = 0; i < packets.length; i++) pending.push(i);
+    var skipRuler = false;              // 預檢已經播過標尺，首輪不再重播
     function alive() { return tok === sendSeq; }
 
     function transmit(list, after) {
@@ -1532,7 +1583,7 @@ var App = (function () {
         var pkt = Ultra.buildPacket(packets[idx]);
         /* 每次发送的第一包前面自动播 5 轮标尺音（约 0.96 秒）：
          * 收端听到这段就把本链路的频率缩放量出来，不需要任何人去点「校正」。 */
-        if (round === 1 && j === 1) {
+        if (round === 1 && j === 1 && !skipRuler) {
           log('发送前自动播标尺音 1.07s（300ms 定位音 + 4 轮同步，对端自动校准）');
           tx.sendCal(pkt, b, symMs, 4, function () { setTimeout(one, 150); });
         } else {
@@ -1602,7 +1653,16 @@ var App = (function () {
         });
       });
     }
-    loop();
+    /* 開跑前先做一次雙向預檢（只在「等回執」模式下做，盲發沒有回執可驗）。
+     * 預檢沒過也照發 —— 但日誌裡會留下一行「預檢未通過」，不必再靠猜。 */
+    if (waitAckOn && !ackDead) {
+      preflight(6000, function (ok) {
+        if (!alive()) return;
+        skipRuler = true;                // 標尺剛播過，首輪不用再播
+        if (ok) log('預檢完成，開始正式傳輸');
+        loop();
+      });
+    } else loop();
   }
 
   /* 盲发模式（不等回执）：A,B,C,A,B,C 逐轮铺，而不是每包连发 N 遍。
