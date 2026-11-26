@@ -339,7 +339,7 @@
 /* ================= 版本 / 語系 / 彈窗 / 紀錄 =================
  * 這一層獨立於 App 內核之外：只碰 DOM，不碰音頻。
  * 目的：畫面乾淨、按鈕少、紀錄能一鍵帶走。 */
-var VER = { v: 'v2026-11-26n', t: '2026-11-26 17:35' };
+var VER = { v: 'v2026-11-26o', t: '2026-11-26 16:20' };
 
 /* ---------- 彈窗 ---------- */
 var Dlg = {
@@ -649,7 +649,7 @@ var Lang = (function () {
 })();
 </script>
 
-<script src="ultra-core.js?v=20261126n"></script>
+<script src="ultra-core.js?v=20261126o"></script>
 <script>
 var App = (function () {
   /* ===== 单档单速（2026-11-25 起）=====
@@ -1224,24 +1224,33 @@ var App = (function () {
 
   /* 音量条（三档都画）：不管频率落在哪一档、不管缩放对不对、不管解码器锁没锁上，
    * 只要有超声能量进来这根条就要动 —— 用户靠它判断「对面到底有没有在发」。 */
-  var barLv = {}, barDb = {}, bandFloor = {}, lastScan = { f: 0, db: 0, v: 0 };
+  var barLv = {}, barDb = {}, binFloor = [], floorWarm = 0, lastScan = { f: 0, db: 0, v: 0 };
   var HF_LO = 17000, HF_HI = 23800, HF_STEP = 200;
   function paintMeters(slice, sr) {
     var scan = Ultra.bandScan(slice, sr, HF_LO, HF_HI, HF_STEP);
-    var peak = { f: 0, v: 0 }, vs = [];
+    /* 每一格各学自己的「安静电平」，不拿整段的中位数当 0 ——
+     * 手机麦克风从 21k 往上就掉得厉害，最后几格的安静电流声比前几格低十几 dB，
+     * 拿中位数当基线会让这些格子永远顶格（「还没开始发送条子就满格」就是这个原因）。 */
+    if (binFloor.length !== scan.length) { binFloor = []; floorWarm = 0; }
+    var db = -99, peak = { f: 0, v: 0 };
     for (var i = 0; i < scan.length; i++) {
-      vs.push(scan[i].v);
-      if (scan[i].v > peak.v) peak = scan[i];
+      var cur = scan[i].v + 1e-12;
+      var f = binFloor[i];
+      if (!(f > 0)) f = cur;
+      /* 前 12 次（约 4 秒）只往下取：万一刚好在信号中间开麦，也能很快把基线压回安静值；
+       * 之后允许缓慢回升（每秒约 +15%），免得一次误压把某一格永久钉死。 */
+      f = cur < f ? cur : (floorWarm < 12 ? f : f * 1.05);
+      binFloor[i] = Math.max(f, 1e-12);
+      var d = 20 * Math.log10(cur / binFloor[i]);
+      if (d > db) { db = d; peak = scan[i]; }
     }
-    vs.sort(function (a, b) { return a - b; });
-    var med = vs[Math.floor(vs.length / 2)] || 1e-12;
-    lastScan = { f: peak.f, v: peak.v, med: med, db: 20 * Math.log10((peak.v + 1e-12) / (med + 1e-12)) };
-    /* 电平 = 最强一格比「整段的中位数（=安静）」高多少 dB，0 dB=0%、24 dB=100%。
-     * 这样不管声音落在 18.1k、20.5k 还是 22.9k，条子都会动；噪声本身几乎没有起伏，不会乱跳。 */
-    var tgt = Math.max(0, Math.min(100, Math.round(lastScan.db / 24 * 100)));
+    floorWarm++;
+    lastScan = { f: peak.f, v: peak.v, db: db };
+    /* 电平 = 最强那一格比它自己的安静电平高多少 dB：0 dB=0%、24 dB=100%。 */
+    var tgt = Math.max(0, Math.min(100, Math.round(db / 24 * 100)));
     var prev = barLv.hf || 0;
     prev = tgt > prev ? tgt : prev * 0.72 + tgt * 0.28;   // 起得快、落得慢，肉眼才像「在抖」
-    barLv.hf = prev; barDb.hf = lastScan.db;
+    barLv.hf = prev; barDb.hf = db;
     var bar = $('bar-hf'), val = $('val-hf');
     if (bar) bar.style.width = Math.round(prev) + '%';
     if (val) val.textContent = Math.round(prev) + '%';

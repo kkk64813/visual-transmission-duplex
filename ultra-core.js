@@ -358,12 +358,13 @@ var GAIN = 0.72;          // 默认标准音量：够响，又不至于让喇叭
    * 同步头 8 个符号一个都凑不出（日志里「同步命中 0/8」的根因）。
    * 现在改成分组 argmax：永远给出一个候选符号，靠「8 符号全对」和 CRC 兜错。
    * 误判的代价被 CRC 挡住，而漏判的代价是整包收不到 —— 两害相权取 argmax。 */
-  function classifyDual(x, off, len, sr, band, scale) {
+  function classifyDual(x, off, len, sr, band, scale, g8) {
     if (off < 0 || off + len > x.length) return -1;
     var m = new Float64Array(TONES), t;
     for (t = 0; t < TONES; t++) {
       var v = goertzel(x, off, len, toneFreq(band, t, scale), sr);
       m[t] = v >= 0 ? v : 0;
+      if (g8) m[t] *= g8[t];
     }
     var R = top2(m, 0, 3), C = top2(m, 4, 7);
     if (!(R.v > 0) || !(C.v > 0)) return -1;
@@ -371,12 +372,13 @@ var GAIN = 0.72;          // 默认标准音量：够响，又不至于让喇叭
   }
 
   /* 只给诊断用：返回组合符号与行/列两个边距（dB），真实判决不看它 */
-  function dualMargin(x, off, len, sr, band, scale) {
+  function dualMargin(x, off, len, sr, band, scale, g8) {
     if (off < 0 || off + len > x.length) return null;
     var m = new Float64Array(TONES), t;
     for (t = 0; t < TONES; t++) {
       var v = goertzel(x, off, len, toneFreq(band, t, scale), sr);
       m[t] = v >= 0 ? v : 0;
+      if (g8) m[t] *= g8[t];
     }
     var R = top2(m, 0, 3), C = top2(m, 4, 7);
     return {
@@ -387,7 +389,7 @@ var GAIN = 0.72;          // 默认标准音量：够响，又不至于让喇叭
   }
 
   /* 双音 + 亚采样精修（跟 classifyBest 同一套「在 ±span 内找边距最大」的思想） */
-  function classifyDualBest(x, off, len, sr, band, span, scale) {
+  function classifyDualBest(x, off, len, sr, band, span, scale, g8) {
     var best = { sym: 0, margin: -99, delta: 0 };
     var step = Math.max(1, Math.round((span || 0) / 2));
     for (var d = -(span || 0); d <= (span || 0); d += step) {
@@ -397,6 +399,7 @@ var GAIN = 0.72;          // 默认标准音量：够响，又不至于让喇叭
       for (t = 0; t < TONES; t++) {
         var v = goertzel(x, o, len, toneFreq(band, t, scale), sr);
         m[t] = v >= 0 ? v : 0;
+        if (g8) m[t] *= g8[t];
       }
       var R = top2(m, 0, 3), C = top2(m, 4, 7);
       var mr = 20 * Math.log10((R.v + 1e-12) / (R.sv + 1e-12));
@@ -998,6 +1001,99 @@ var GAIN = 0.72;          // 默认标准音量：够响，又不至于让喇叭
     });
   };
 
+  /* 从同步头量出 8 条音各自的相对增益（SYNC2 每档音各覆盖两次）。
+   * 只在双音模式用；单音模式一次只响一条音，均衡没有意义。 */
+  StreamDecoder.prototype._syncGains = function (base, symLen, g) {
+    if (!this.dual) return null;
+    var wl = symLen - g;
+    var acc = new Float64Array(TONES), cnt = new Uint8Array(TONES);
+    for (var i = 0; i < this.pat.length; i++) {
+      var off = Math.round(base + i * symLen) + g;
+      if (off < 0 || off + wl > this.fill) return null;
+      var pr = pairTones(this.pat[i]);
+      for (var k = 0; k < 2; k++) {
+        var m = goertzel(this.buf, off, wl, toneFreq(this.band, pr[k], this.fScale), this.sr);
+        if (m > 0) { acc[pr[k]] += m; cnt[pr[k]]++; }
+      }
+    }
+    var lg = 0, n = 0, t;
+    for (t = 0; t < TONES; t++) if (cnt[t]) { lg += Math.log((acc[t] / cnt[t]) + 1e-12); n++; }
+    if (!n) return null;
+    var ref = Math.exp(lg / n);
+    var gs = new Float64Array(TONES);
+    var mx = -99, mn = 99;
+    for (t = 0; t < TONES; t++) {
+      var a = cnt[t] ? acc[t] / cnt[t] : ref;
+      var gg = ref / (a + 1e-12);
+      if (gg < 0.25) gg = 0.25;
+      if (gg > 4) gg = 4;
+      gs[t] = gg;
+      var dbT = 20 * Math.log10(a / ref + 1e-12);   // 这条音比其他音弱多少 dB（诊断用）
+      if (dbT > mx) mx = dbT;
+      if (dbT < mn) mn = dbT;
+    }
+    this.gainSpread = mx - mn;
+    this.lastGains = gs;
+    return gs;
+  };
+
+  /* 两遍读一格包：粗读求每符号偏移 → 拟合一条直线（起始偏移 + 斜率）→ 按直线重读。
+   * 手机和电脑是两个晶振，差 0.35% 就很常见：一个包 50 个符号下来累计偏 0.2 个符号，
+   * 包尾的读窗整个跨进下一个符号。所以斜率必须真的估准，不能靠单符号的局部搜索
+   * （局部搜索只在 ±symLen/6 内，包尾早就顶到边界了）。 */
+  StreamDecoder.prototype._span = function (symLen) { return Math.max(3, Math.round(symLen / 6)); };
+
+  StreamDecoder.prototype._measureOffsets = function (base, symLen, g, gains, scale, a0, slope) {
+    var span = this._span(symLen), wl = symLen - g;
+    var offs = new Float64Array(this.totalSyms), i, r;
+    for (i = 0; i < this.totalSyms; i++) {
+      r = (this.dual ? classifyDualBest : classifyBest)(this.buf,
+        Math.round(base + i * symLen + a0 + slope * i) + g, wl, this.sr, this.band, span, scale, gains);
+      offs[i] = r.delta || 0;
+    }
+    return offs;
+  };
+
+  function medianOf(a) {
+    var s = Array.prototype.slice.call(a).sort(function (x, y) { return x - y; });
+    return s.length ? s[Math.floor(s.length / 2)] : 0;
+  }
+
+  StreamDecoder.prototype._readGrid = function (base, symLen, g, gains, scale) {
+    var wl = symLen - g, span = this._span(symLen);
+    var slMax = Math.round(symLen / 8);
+
+    var offs = this._measureOffsets(base, symLen, g, gains, scale, 0, 0);
+    var i;
+    /* 起始偏移用中位数（抗反射），斜率用最小二乘（抓时钟差）。 */
+    var a0 = medianOf(offs);
+    var mi = (this.totalSyms - 1) / 2, num = 0, den = 0;
+    for (i = 0; i < this.totalSyms; i++) { num += (i - mi) * (offs[i] - a0); den += (i - mi) * (i - mi); }
+    var slope = den ? num / den : 0;
+    var slMax = Math.round(symLen / 8);
+    if (slope > slMax) slope = slMax;
+    if (slope < -slMax) slope = -slMax;
+
+    var syms = new Uint8Array(this.totalSyms);
+    var sum = 0, min = 99, hits = 0;
+    for (i = 0; i < this.totalSyms; i++) {
+      var off = Math.round(base + i * symLen + a0 + slope * i);
+      if (this.dual) {
+        var dm = dualMargin(this.buf, off + g, wl, this.sr, this.band, scale, gains);
+        if (!dm) { syms[i] = 0; continue; }
+        syms[i] = dm.sym;
+        var mg = Math.min(dm.mr, dm.mc);
+        sum += mg; if (mg < min) min = mg;
+      } else {
+        var rs = classifyBest(this.buf, Math.max(0, off + g), wl, this.sr, this.band, 0, scale);
+        syms[i] = rs.sym;
+        sum += rs.margin; if (rs.margin < min) min = rs.margin;
+      }
+      if (i < this.pat.length && syms[i] === this.pat[i]) hits++;
+    }
+    return { syms: syms, margin: this.totalSyms ? sum / this.totalSyms : 0, minMargin: min, slope: slope, a0: a0, hits: hits };
+  };
+
   StreamDecoder.prototype._decodePacket = function () {
     var symLen = this.symLen;
     var base = this.syncAbs - this.abs0;
@@ -1015,48 +1111,20 @@ var GAIN = 0.72;          // 默认标准音量：够响，又不至于让喇叭
      * 区分开了：前者变成斜率，后者被最小二乘当噪声压掉。 */
     var g0 = guardOf(symLen, this.sr);
     var g = this.guardMs ? Math.max(g0, Math.min(symLen - 16, Math.round(this.sr * this.guardMs / 1000))) : g0;
-    var wl = symLen - g;
-    var span = Math.max(3, Math.round(symLen / 6));
-    var syms = new Uint8Array(this.totalSyms);
-    var offs = new Float64Array(this.totalSyms);
-    var i, r;
-    for (i = 0; i < this.totalSyms; i++) {
-      r = (this.dual ? classifyDualBest : classifyBest)(this.buf, Math.round(base + i * symLen) + g, wl, this.sr, this.band, span, this.fScale);
-      offs[i] = r.delta || 0;
-    }
-    /* 中位数当起始偏移（抗反射），最小二乘当斜率（抓时钟差），斜率钳在 ±1/8 符号 */
-    var sorted = Array.prototype.slice.call(offs).sort(function (a, b) { return a - b; });
-    var a0 = sorted.length ? sorted[Math.floor(sorted.length / 2)] : 0;
-    var mi = (this.totalSyms - 1) / 2, num = 0, den = 0;
-    for (i = 0; i < this.totalSyms; i++) { num += (i - mi) * (offs[i] - a0); den += (i - mi) * (i - mi); }
-    var slope = den ? num / den : 0;
-    var slMax = Math.round(symLen / 8);
-    if (slope > slMax) slope = slMax;
-    if (slope < -slMax) slope = -slMax;
 
-    var sumMargin = 0, minMargin = 99;
-    for (i = 0; i < this.totalSyms; i++) {
-      var off = Math.round(base + i * symLen + a0 + slope * i);
-      if (this.dual) {
-        var dm = dualMargin(this.buf, off + g, wl, this.sr, this.band, this.fScale);
-        if (!dm) { syms[i] = 0; continue; }
-        syms[i] = dm.sym;
-        var mg = Math.min(dm.mr, dm.mc);
-        sumMargin += mg;
-        if (mg < minMargin) minMargin = mg;
-      } else {
-        var rs = classifyBest(this.buf, Math.max(0, off + g), wl, this.sr, this.band, 0, this.fScale);
-        syms[i] = rs.sym;
-        sumMargin += rs.margin;
-        if (rs.margin < minMargin) minMargin = rs.margin;
-      }
-    }
-    this.lastMargin = this.totalSyms ? sumMargin / this.totalSyms : 0;
-    this.lastMinMargin = minMargin;
-    this.lastDrift = slope;
+    /* 音间均衡（v-o）：8 条音在喇叭 + 麦克风上的响应差几个 dB 很正常，
+     * 真机日志里同一个符号的两条音能差 19 dB。不均衡时「最响的那条音」会把所有符号
+     * 都拉向它，判决看着有边距、实际是错的。SYNC2 的 8 个同步符号正好把 8 条音各覆盖
+     * 两次，所以直接从同步头量出每条音的增益，判决前先除回去。 */
+    var gains = this._syncGains(base, symLen, g);
 
-    var syncOk = true, hits = 0;
-    for (var j = 0; j < this.pat.length; j++) if (syms[j] === this.pat[j]) hits++;
+    var rd = this._readGrid(base, symLen, g, gains, this.fScale);
+    var syms = rd.syms;
+    this.lastMargin = rd.margin;
+    this.lastMinMargin = rd.minMargin;
+    this.lastDrift = rd.slope;
+
+    var syncOk = true, hits = rd.hits;
     this.lastHits = hits;
     if (hits < this.pat.length - 2) syncOk = false;
     if (!syncOk) {
@@ -1070,6 +1138,25 @@ var GAIN = 0.72;          // 默认标准音量：够响，又不至于让喇叭
     }
     var body = this.dual ? symbolsToBytes2(syms.subarray(this.pat.length)) : symbolsToBytes(syms.subarray(this.pat.length));
     var payload = parsePacket(body);
+    /* CRC 挂了先别急着判死：把缩放微调几档重读一遍。
+     * 真机上「同步 8/8、平均边距 24 dB、CRC 却挂」最常见的成因就是缩放/节奏差了半个
+     * 千分点，判决在符号边缘摇摆。CRC 是唯一真判据 —— 多试几档，谁过算谁；
+     * 过了就把那一档记住给后面的包用。 */
+    if (!payload) {
+      var dsList = [0.0015, -0.0015, 0.003, -0.003];
+      for (var t2 = 0; t2 < dsList.length && !payload; t2++) {
+        var r2 = this._readGrid(base, symLen, g, gains, this.fScale * (1 + dsList[t2]));
+        if (r2.hits < this.pat.length - 2) continue;
+        var b2 = this.dual ? symbolsToBytes2(r2.syms.subarray(this.pat.length)) : symbolsToBytes(r2.syms.subarray(this.pat.length));
+        var p2 = parsePacket(b2);
+        if (p2) {
+          payload = p2; body = b2; syms = r2.syms;
+          this.fScale = this.fScale * (1 + dsList[t2]);
+          this.lastMargin = r2.margin; this.lastMinMargin = r2.minMargin; this.lastDrift = r2.slope;
+          this._diag('fix', '缩放微调到 ×' + this.fScale.toFixed(4) + ' 后 CRC 通过');
+        }
+      }
+    }
     if (!payload) {
       this.errors++;
       this.stat.crc++;
@@ -1083,7 +1170,8 @@ var GAIN = 0.72;          // 默认标准音量：够响，又不至于让喇叭
     }
     this.packets++;
     this.stat.pk++;
-    this._diag('ok', 'type=' + payload[0] + ' seq=' + payload[1] + '/' + payload[2] + ' n=' + payload.length);
+    this._diag('ok', 'type=' + payload[0] + ' seq=' + payload[1] + '/' + payload[2] + ' n=' + payload.length +
+      ' 音差=' + (this.gainSpread != null ? this.gainSpread.toFixed(1) + 'dB' : '-') + ' 漂移=' + this.lastDrift.toFixed(1));
     /* 回调抛异常不能把解码器卡死在原地：以前 onPacket 里一句 ReferenceError
      * 就能让「advance scanAbs」永远执行不到，同一个包被反复重新解出上百次，
      * 后面的包一个都进不来（手机端「解出 0」就是这么来的）。 */
