@@ -339,7 +339,7 @@
 /* ================= 版本 / 語系 / 彈窗 / 紀錄 =================
  * 這一層獨立於 App 內核之外：只碰 DOM，不碰音頻。
  * 目的：畫面乾淨、按鈕少、紀錄能一鍵帶走。 */
-var VER = { v: 'v2026-11-26m', t: '2026-11-26 17:10' };
+var VER = { v: 'v2026-11-26n', t: '2026-11-26 17:35' };
 
 /* ---------- 彈窗 ---------- */
 var Dlg = {
@@ -649,7 +649,7 @@ var Lang = (function () {
 })();
 </script>
 
-<script src="ultra-core.js?v=20261126m"></script>
+<script src="ultra-core.js?v=20261126n"></script>
 <script>
 var App = (function () {
   /* ===== 单档单速（2026-11-25 起）=====
@@ -727,14 +727,12 @@ var App = (function () {
     var m = $('meters');
     if (!m) return;
     m.innerHTML = '';
-    /* 三档都画：不管信号落在哪一档，用户都要能看见「有东西进来」。
-     * 主用档排最前，也是唯一会印具体频率的那一档。 */
-    Ultra.BANDS.forEach(function (b) {
-      var d = document.createElement('div');
-      d.className = 'meter';
-      d.innerHTML = '<span class="nm">' + b.name + '</span><span class="bar"><i id="bar-' + b.key + '"></i></span><span class="vl" id="val-' + b.key + '">0%</span>';
-      m.appendChild(d);
-    });
+    /* 一根条，管整段超声范围（17–23.8k）：用户不需要知道工具内部按 200 Hz 分了几个档，
+     * 只要「对面在发东西」这根条就该动。 */
+    var d = document.createElement('div');
+    d.className = 'meter';
+    d.innerHTML = '<span class="nm">超聲波 17–24k</span><span class="bar"><i id="bar-hf"></i></span><span class="vl" id="val-hf">0%</span>';
+    m.appendChild(d);
   }
 
   /* ---------- 频带能量门控（第 2 版） ----------
@@ -1226,25 +1224,27 @@ var App = (function () {
 
   /* 音量条（三档都画）：不管频率落在哪一档、不管缩放对不对、不管解码器锁没锁上，
    * 只要有超声能量进来这根条就要动 —— 用户靠它判断「对面到底有没有在发」。 */
-  var barLv = {}, barDb = {}, bandFloor = {};
+  var barLv = {}, barDb = {}, bandFloor = {}, lastScan = { f: 0, db: 0, v: 0 };
+  var HF_LO = 17000, HF_HI = 23800, HF_STEP = 200;
   function paintMeters(slice, sr) {
-    Ultra.BANDS.forEach(function (b) {
-      var e = Ultra.bandEnergy(slice, sr, b);
-      /* 每档自己学一个「安静时的电平」当 0%：噪声电平会随设备/环境变化，
-       * 写死一个常数必然要么永远 0%、要么永远 100%。 */
-      var f0 = bandFloor[b.key];
-      if (!(f0 > 0)) f0 = e.peak;
-      else f0 = e.peak < f0 ? e.peak : f0 * 1.04;      // 跟着最低点往下走，安静久了慢慢回升
-      bandFloor[b.key] = f0;
-      var db = 20 * Math.log10((Math.max(e.peak, 1e-12) + 1e-12) / (Math.max(f0, 1e-12) + 1e-12));
-      var tgt = Math.max(0, Math.min(100, Math.round(db / 24 * 100)));
-      var prev = barLv[b.key] || 0;
-      prev = tgt > prev ? tgt : prev * 0.72 + tgt * 0.28;   // 起得快、落得慢，肉眼才像「在抖」
-      barLv[b.key] = prev; barDb[b.key] = db;
-      var bar = $('bar-' + b.key), val = $('val-' + b.key);
-      if (bar) bar.style.width = Math.round(prev) + '%';
-      if (val) val.textContent = Math.round(prev) + '%';
-    });
+    var scan = Ultra.bandScan(slice, sr, HF_LO, HF_HI, HF_STEP);
+    var peak = { f: 0, v: 0 }, vs = [];
+    for (var i = 0; i < scan.length; i++) {
+      vs.push(scan[i].v);
+      if (scan[i].v > peak.v) peak = scan[i];
+    }
+    vs.sort(function (a, b) { return a - b; });
+    var med = vs[Math.floor(vs.length / 2)] || 1e-12;
+    lastScan = { f: peak.f, v: peak.v, med: med, db: 20 * Math.log10((peak.v + 1e-12) / (med + 1e-12)) };
+    /* 电平 = 最强一格比「整段的中位数（=安静）」高多少 dB，0 dB=0%、24 dB=100%。
+     * 这样不管声音落在 18.1k、20.5k 还是 22.9k，条子都会动；噪声本身几乎没有起伏，不会乱跳。 */
+    var tgt = Math.max(0, Math.min(100, Math.round(lastScan.db / 24 * 100)));
+    var prev = barLv.hf || 0;
+    prev = tgt > prev ? tgt : prev * 0.72 + tgt * 0.28;   // 起得快、落得慢，肉眼才像「在抖」
+    barLv.hf = prev; barDb.hf = lastScan.db;
+    var bar = $('bar-hf'), val = $('val-hf');
+    if (bar) bar.style.width = Math.round(prev) + '%';
+    if (val) val.textContent = Math.round(prev) + '%';
   }
 
   function meterTick(chunk) {
@@ -1260,28 +1260,32 @@ var App = (function () {
       var pair2 = tonePairOf(e2, band);
       var pk = Ultra.peakFreq(slice, sr, band.f0 - 120, band.f0 + band.df * 7 + 120, 80);
       var fl2 = gateLatestE.floor || 0;
-      var snr2 = fl2 > 0 ? 10 * Math.log10(Math.max(e2.peak, 1e-18) / fl2) : barDb[band.key] || 0;
+      var snr2 = fl2 > 0 ? 10 * Math.log10(Math.max(e2.peak, 1e-18) / fl2) : barDb.hf || 0;
       lastSnr = snr2; window.__snr = snr2;
-      var hot2 = snr2 > 3;
-      showFreq(hot2, pk, pair2, snr2);
+      showFreq(snr2 > 3, pk, pair2, snr2);
       updateDbg();
     }
     maybeAck();
   }
 
-  /* 大字号频率：双音显示「行音 · 列音」，单音显示峰点。 */
+  /* 大字号频率：双音显示「行音 · 列音」，单音显示峰点。
+   * 本档没信号、但整段超声范围里有东西（比如对端在 20.5k 上发回执）时，
+   * 也要把那个频率报出来 —— 否则用户只看到「安靜」而条子在动，会以为页面坏了。 */
   function showFreq(hot, pk, pair, db) {
     var el = $('dPeak'), lv = $('rxNow');
     var dual = dualOn();
+    var wide = lastScan.db > 6 && lastScan.f > 0;
     if (el) {
-      el.textContent = hot ? (dual ? (pair.row + ' · ' + pair.col) : pk.f) : '—';
-      el.style.fontSize = hot ? (dual ? '26px' : '38px') : '22px';
-      el.style.color = hot ? 'var(--accent-2)' : 'var(--muted)';
+      var txt = hot ? (dual ? (pair.row + ' · ' + pair.col) : pk.f) : (wide ? lastScan.f : '—');
+      el.textContent = txt;
+      el.style.fontSize = hot ? (dual ? '26px' : '38px') : (wide ? '26px' : '22px');
+      el.style.color = (hot || wide) ? 'var(--accent-2)' : 'var(--muted)';
     }
     if (lv) {
-      if (!hot) lv.textContent = '安靜';
-      else if (dual) lv.textContent = '雙音 +' + db.toFixed(0) + ' dB · 行 ' + pair.row + ' / 列 ' + pair.col;
-      else lv.textContent = pk.f + ' Hz · +' + db.toFixed(0) + ' dB';
+      if (hot) lv.textContent = dual ? ('雙音 +' + db.toFixed(0) + ' dB · 行 ' + pair.row + ' / 列 ' + pair.col)
+        : (pk.f + ' Hz · +' + db.toFixed(0) + ' dB');
+      else if (wide) lv.textContent = '本檔沒訊號 · ' + lastScan.f + ' Hz 有 +' + lastScan.db.toFixed(0) + ' dB';
+      else lv.textContent = '安靜';
     }
   }
 
@@ -1301,7 +1305,7 @@ var App = (function () {
     var pk = Ultra.peakFreq(slice, sr, band.f0 - 120, band.f0 + band.df * 7 + 120, 80);
     var pair = tonePairOf(e, band);
     var fl = gateLatestE.floor || 0;
-    var snr = fl > 0 ? 10 * Math.log10(Math.max(e.peak, 1e-18) / fl) : (barDb[band.key] || 0);
+    var snr = fl > 0 ? 10 * Math.log10(Math.max(e.peak, 1e-18) / fl) : (barDb.hf || 0);
     lastSnr = snr; window.__snr = snr;
     /* 门限只用来决定「大字要不要印具体数字」，音量条不受它影响。 */
     var hot = snr > 3;

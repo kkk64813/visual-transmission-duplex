@@ -480,6 +480,22 @@ var GAIN = 0.72;          // 默认标准音量：够响，又不至于让喇叭
     }
     return best;
   }
+
+  /* 宽频扫描：把一段音频在 [lo,hi] 上按 step 逐格量能量，返回数组。
+   * 界面用它在「整段超声范围」上判断有没有东西在响 —— 不再只管那三个 8 音的档位。
+   * 36 格（17k→24k，200 Hz 一格）在手机上几十毫秒，0.35 秒一次完全够用。 */
+  function bandScan(x, sr, lo, hi, step) {
+    step = step || 200;
+    var n = Math.min(x.length, Math.round(sr * 0.045));
+    var off = x.length - n;
+    var out = [];
+    for (var f = lo; f <= hi; f += step) {
+      var m = goertzel(x, off, n, f, sr);
+      out.push({ f: f, v: m >= 0 ? m : 0 });
+    }
+    return out;
+  }
+
   /* ---------------- 一次性频率测量（自动校准的核心） ----------------
    * 旧办法是「猜 scale、盲扫 17 格、每格等 1.2 秒看能不能解出」——既慢又要人按。
    * 这里改成直接量：把音频降采样到 sr/10（8 个音的 200 Hz 间距仍然分得开），
@@ -1271,7 +1287,7 @@ var GAIN = 0.72;          // 默认标准音量：够响，又不至于让喇叭
     packetSymbols: packetSymbols,
     makeWaveform: makeWaveform, makeProbe: makeProbe,
     goertzel: goertzel, classify: classify, bandEnergy: bandEnergy,
-    classifyBest: classifyBest, peakFreq: peakFreq,
+    classifyBest: classifyBest, peakFreq: peakFreq, bandScan: bandScan,
     measureScale: measureScale, makeRuler: makeRuler,
     getGain: function () { return GAIN; },
     getScale: function () { return FORCED_SCALE || SHARED_SCALE; },
