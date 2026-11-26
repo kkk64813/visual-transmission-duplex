@@ -116,7 +116,8 @@ var GAIN = 0.72;          // 默认标准音量：够响，又不至于让喇叭
 
   function ackPayload(round, total, have, diag) {
     var n = Math.ceil(Math.min(total, ACK_MAX) / 8) || 1;
-    var b = new Uint8Array(4 + n + (diag ? 3 : 0));
+    var fb = (diag && diag.flags != null) ? 1 : 0;
+    var b = new Uint8Array(4 + n + (diag ? 3 : 0) + fb);
     b[0] = T_ACK;
     b[1] = round & 0xff;
     b[2] = total & 0xff;
@@ -131,6 +132,10 @@ var GAIN = 0.72;          // 默认标准音量：够响，又不至于让喇叭
       b[4 + n] = h;
       b[5 + n] = Math.round((mg + 16) / 2) & 0x1f;        // -16..+46 dB → 0..31，2 dB 一格
       b[6 + n] = Math.round((lv + 40) / 3) & 0x1f;        // -40..+46 dB → 0..31，3 dB 一格
+      /* 第 4 個 diag 位元組：對端的「模式/頻帶/版本」指紋。
+       * 沒有它，兩端一個在雙音一個在單音、或版本差好幾版時，發端只能看到「同步 0/8」，
+       * 完全猜不到對方到底是哪種調變 —— 這是「老是解不出」最常見的真相。 */
+      if (fb) b[7 + n] = diag.flags & 0xff;
     }
     return b;
   }
@@ -146,6 +151,7 @@ var GAIN = 0.72;          // 默认标准音量：够响，又不至于让喇叭
     if (payload.length >= 6 + n) {
       diag = { hits: payload[4 + n] & 15, margin: (payload[5 + n] & 31) * 2 - 16, level: -40 };
       if (payload.length >= 7 + n) diag.level = (payload[6 + n] & 31) * 3 - 40;
+      if (payload.length >= 8 + n) diag.flags = payload[7 + n];
     }
     return {
       round: payload[1],

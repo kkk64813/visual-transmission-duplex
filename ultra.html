@@ -339,7 +339,7 @@
 /* ================= 版本 / 語系 / 彈窗 / 紀錄 =================
  * 這一層獨立於 App 內核之外：只碰 DOM，不碰音頻。
  * 目的：畫面乾淨、按鈕少、紀錄能一鍵帶走。 */
-var VER = { v: 'v2026-11-26i', t: '2026-11-26 15:08' };
+var VER = { v: 'v2026-11-26j', t: '2026-11-26 15:16' };
 
 /* ---------- 彈窗 ---------- */
 var Dlg = {
@@ -423,6 +423,7 @@ window.REC = (function () {
       r: drop && /%$/.test(drop.textContent || '') ? parseFloat(drop.textContent) : null,
       lv: Math.round(window.__snr || -99)
     };
+    if (st.lv > 3 && window.__prof) st.tp = window.__prof.slice();
     snaps.push(st); if (snaps.length > 90) snaps.shift();
     if (st.f) rx.peak.push(st.f);
     if (st.f && st.f >= 17500) {
@@ -465,7 +466,7 @@ window.REC = (function () {
     out.push('', '--- 逐秒採樣（近 ' + snaps.length + ' 秒：頻率/同步命中/收樣率）---');
     out.push(snaps.map(function (s) { return s.t + ' ' + (s.f ? s.f + 'Hz' : '-Hz') + ' ' +
       (s.lv == null || s.lv < -90 ? '-' : (s.lv > 0 ? '+' : '') + s.lv + 'dB') +
-      ' h=' + s.h + '/8 ' + (s.r == null ? '-' : s.r + '%'); }).join('\n'));
+      ' h=' + s.h + '/8 ' + (s.r == null ? '-' : s.r + '%') + (s.tp ? ' 音=' + s.tp.join(',') : ''); }).join('\n'));
 
     out.push('', '--- 事件 ---', lines.slice(-120).join('\n'));
     out.push('', '--- 解碼器（同步/邊距/縮放，近 ' + Math.min(diags.length, 120) + ' 條）---', diags.slice(-120).join('\n'));
@@ -648,7 +649,7 @@ var Lang = (function () {
 })();
 </script>
 
-<script src="ultra-core.js?v=20261126i"></script>
+<script src="ultra-core.js?v=20261126j"></script>
 <script>
 var App = (function () {
   /* ===== 单档单速（2026-11-25 起）=====
@@ -796,7 +797,26 @@ var App = (function () {
   /* 本机（收端）看到的最好的同步命中 —— 随回执带回去给发端，发端那份日志因此
    * 同时包含「我发了什么」和「对方听到什么」，一个文件就能定位问题。 */
   var rxBest = { hits: 0, margin: 0 }, rxSnrMax = 0;
-  function rxDiag() { return { hits: rxBest.hits, margin: rxBest.margin, level: Math.round(rxSnrMax) }; }
+  /* 把自己這一端的「模式/頻帶」一起回給對方：bit0 雙音、bit1-2 頻帶索引。
+   * 對端據此一眼看出「是不是一個在雙音一個在單音」——這種不一致會讓同步永遠 0/8。 */
+  function peerFlags() {
+    var bi = 0;
+    for (var i = 0; i < Ultra.BANDS.length; i++) if (Ultra.BANDS[i].key === band.key) bi = i;
+    return ((dualOn() ? 1 : 0) | ((bi & 3) << 1)) & 0xff;
+  }
+  function peerDesc(f) {
+    if (f == null) return '未帶指紋（舊頁面）';
+    var m = (f & 1) ? '雙音' : '單音';
+    var b = Ultra.BANDS[(f >> 1) & 3];
+    return m + ' · ' + (b ? b.name : '?');
+  }
+  function peerMismatch(f) {
+    if (f == null) return '';
+    var pm = (f & 1) ? 'dual' : 'single';
+    if (pm === MODE) return '';
+    return '⚠ 對方是' + peerDesc(f) + '，我這端是' + (MODE === 'dual' ? '雙音' : '單音') + '：調變不一致，永遠解不開，兩端要切成同一種';
+  }
+  function rxDiag() { return { hits: rxBest.hits, margin: rxBest.margin, level: Math.round(rxSnrMax), flags: peerFlags() }; }
 
   /* ---------- 接收 ---------- */
   function makeDecoders(sr) {
@@ -1226,6 +1246,7 @@ var App = (function () {
     var half = Math.min(chunk.length, Math.round(sr * 0.09));
     var slice = chunk.subarray(chunk.length - half);
     var e = Ultra.bandEnergy(slice, sr, band);
+    window.__prof = e.freqs.map(function (m) { return Math.round(10 * Math.log10(Math.max(m, 1e-12))); });
     var lvl2 = e.peak > 0 ? Math.min(100, Math.round(20 * Math.log10(e.peak + 1) * 3)) : 0;
     var bar = $('bar-' + band.key), val = $('val-' + band.key);
     if (bar) {
@@ -1545,6 +1566,9 @@ var App = (function () {
   function ackListen(ms, done) {
     ackGot = null;
     ackMeterReset();
+    /* 統計要「按每次監聽」清零：解碼器是跨輪重複使用的，不清就成了累計值 —— v-i 日誌
+     * 出現「解出回执 132」卻同時寫「没收到回执」就是這個原因。 */
+    try { (ackDec || []).forEach(function (d) { d.stat.sync = 0; d.stat.crc = 0; d.stat.pk = 0; }); } catch (e) {}
     var fired = false;
     /* 兜底：麥克風權限提示沒人按、或裝置被別的程序佔住時，getUserMedia 會一直掛著不 resolve，
      * 整條流程就無聲無息停住（v-e/f 的「預檢停在②」就是這樣，日誌裡什麼都不會出現）。
@@ -1637,7 +1661,8 @@ var App = (function () {
         var dg = ack.diag;
         if (dg) {
           if (window.REC) REC.setPre('通過 · 對方 SNR +' + dg.level + ' dB · 同步 ' + dg.hits + '/8');
-          log('預檢通過｜對方在線 · 對方聽到的 18.1k SNR +' + dg.level + ' dB · 對方同步 ' + dg.hits + '/8 · 邊距 ' + dg.margin + ' dB', '#0a5f4f');
+          log('預檢通過｜對方在線（' + peerDesc(dg.flags) + '）· 對方聽到的 18.1k SNR +' + dg.level + ' dB · 對方同步 ' + dg.hits + '/8 · 邊距 ' + dg.margin + ' dB', '#0a5f4f');
+          var mm = peerMismatch(dg.flags); if (mm) log(mm, '#c0392b');
           if (dg.level < 6) log('預檢提醒：對方聽到的量只有 +' + dg.level + ' dB，偏弱。兩台靠近些、或把系統音量調大再發', '#b4791f');
           else if (dg.level > 26) log('預檢提醒：對方聽到的量 +' + dg.level + ' dB 很足' + (dg.hits === 0 ? '，但同步沒對上 —— 是頻率/時長問題，不是音量問題' : ''), '#b4791f');
         } else {
@@ -1729,7 +1754,7 @@ var App = (function () {
           if (ack.total === 0) {
             var dg = ack.diag;
             log('对方回执「听到了、但一包都没解出」' +
-              (dg ? '｜對方觀測：同步最好 ' + dg.hits + '/8 · 邊距 ' + dg.margin + ' dB' : '') +
+              (dg ? '｜對方：' + peerDesc(dg.flags) + ' · 同步最好 ' + dg.hits + '/8 · 邊距 ' + dg.margin + ' dB · 對方聽到 ' + dg.level + ' dB' : '') +
               '：数据链路没解出来。' + (dg && dg.hits === 0 ? '对方连同步头都没对上，多半是音量不够或频率偏太多。' : ''),
               '#b4791f');
             round++;
