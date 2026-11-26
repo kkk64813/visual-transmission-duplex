@@ -1,9 +1,10 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="zh-Hant">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>光声气隙传输 · Cimbar 双工</title>
+<title>Cimbar 雙工</title>
+<link rel="stylesheet" href="ui.css">
 <style>
   :root{
     --bg:#f5f7f6; --surface:#fff; --ink:#16211e; --muted:#6d7a75;
@@ -11,71 +12,43 @@
     --shadow:0 1px 2px rgba(20,40,35,.04),0 8px 24px rgba(20,40,35,.06);
   }
   *{box-sizing:border-box}
-  body{
-    margin:0; background:var(--bg); color:var(--ink);
-    font:16px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
-    -webkit-font-smoothing:antialiased;
-  }
-  .wrap{max-width:880px;margin:0 auto;padding:48px 24px 72px}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font:16px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang TC","Microsoft JhengHei","PingFang SC",sans-serif;
+    -webkit-font-smoothing:antialiased}
+  .wrap{max-width:880px;margin:0 auto;padding:34px 24px 60px}
 
-  header{display:flex;align-items:center;gap:12px;margin-bottom:52px;flex-wrap:wrap}
+  header{display:flex;align-items:center;gap:12px;margin-bottom:46px;flex-wrap:wrap}
   .mark{width:32px;height:32px;flex:0 0 32px;display:grid;grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr;gap:3px}
   .mark i{display:block;border-radius:4px;background:var(--accent)}
   .mark i:nth-child(2){background:var(--accent-deep);opacity:.9}
   .mark i:nth-child(3){background:var(--accent-deep);opacity:.55}
   .mark i:nth-child(4){background:#9ed4c4}
   header .name{font-weight:650;letter-spacing:.02em}
-  .pill{margin-left:auto;font-size:12.5px;color:var(--accent-deep);background:var(--accent-soft);
-    border:1px solid #cfe9df;border-radius:999px;padding:3px 11px;white-space:nowrap}
+  .grow{flex:1}
 
-  h1{font-size:37px;line-height:1.24;letter-spacing:-.01em;margin:0 0 14px;font-weight:680}
-  h1 span{color:var(--accent)}
-  .lede{font-size:17px;color:var(--muted);max-width:640px;margin:0 0 40px}
+  h1{font-size:37px;line-height:1.24;letter-spacing:-.01em;margin:0 0 12px;font-weight:680}
+  h1 .ac{color:var(--accent);margin-left:5px}
+  .sub{font-size:16px;margin:0 0 36px;color:var(--ink)}
 
-  .cards{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:52px}
-  .card{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:22px 22px 18px;
-    text-decoration:none;color:inherit;box-shadow:var(--shadow);display:flex;flex-direction:column;
+  .cards{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:40px}
+  .card{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:20px 22px;
+    text-decoration:none;color:inherit;box-shadow:var(--shadow);display:flex;align-items:center;gap:14px;
     transition:transform .15s ease,box-shadow .15s ease,border-color .15s ease}
   .card:hover{transform:translateY(-2px);border-color:#cfe0da;box-shadow:0 2px 4px rgba(20,40,35,.05),0 14px 32px rgba(20,40,35,.09)}
   .card.primary{background:linear-gradient(180deg,#fff,#fbfdfc);border-color:#d5e8e1}
-  .card .kicker{font-size:11.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin-bottom:10px}
-  .card h2{font-size:20px;margin:0 0 8px;font-weight:640}
-  .card p{margin:0;font-size:14.5px;color:var(--muted);line-height:1.6}
-  .card .go{margin-top:18px;display:inline-flex;align-items:center;gap:6px;font-size:14px;color:var(--accent);font-weight:600}
-  .card .go svg{width:15px;height:15px}
+  .card .ico{width:34px;height:34px;border-radius:9px;background:var(--accent-soft);color:var(--accent-deep);
+    display:grid;place-items:center;font-size:17px;flex:0 0 34px}
+  .card h2{font-size:19px;margin:0;font-weight:650}
+  .card .go{margin-left:auto;color:var(--accent);font-size:18px}
 
-  section{margin-bottom:42px}
-  h3{font-size:12.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);font-weight:600;margin:0 0 14px}
-  ol.steps{margin:0;padding:0;list-style:none;counter-reset:s}
-  ol.steps li{counter-increment:s;display:flex;gap:14px;padding:14px 0;border-bottom:1px solid var(--line);align-items:flex-start}
-  ol.steps li:last-child{border-bottom:0}
-  ol.steps li::before{content:counter(s);flex:0 0 24px;height:24px;border-radius:50%;background:var(--accent-soft);
-    color:var(--accent-deep);font-size:13px;font-weight:700;display:grid;place-items:center;margin-top:2px}
-  .steps-txt b{font-weight:640;display:block}
-  .steps-txt span{color:var(--muted);font-size:14.5px}
-
-  table.specs{width:100%;border-collapse:collapse;background:var(--surface);border:1px solid var(--line);
-    border-radius:12px;overflow:hidden;font-size:14.5px}
-  .specs th,.specs td{text-align:left;padding:12px 16px;border-bottom:1px solid var(--line);vertical-align:top}
-  .specs th{width:42%;color:var(--muted);font-weight:500}
-  .specs td{font-variant-numeric:tabular-nums}
-  .specs tr:last-child th,.specs tr:last-child td{border-bottom:0}
-
-  .note{background:#fffaf1;border:1px solid #f1e3ca;border-radius:12px;padding:16px 18px;
-    font-size:14.5px;color:#7c5c26;line-height:1.7}
-  .note b{color:#5f4416}
-
-  footer{margin-top:52px;padding-top:20px;border-top:1px solid var(--line);color:var(--muted);font-size:13.5px;
-    display:flex;justify-content:space-between;gap:16px;flex-wrap:wrap}
+  footer{margin-top:44px;padding-top:18px;border-top:1px solid var(--line);color:var(--muted);font-size:13px;
+    display:flex;justify-content:space-between;gap:14px;flex-wrap:wrap}
   footer a{color:var(--accent);text-decoration:none}
-  footer a:hover{text-decoration:underline}
 
   @media (max-width:680px){
-    .wrap{padding:30px 18px 52px}
+    .wrap{padding:24px 18px 48px}
     h1{font-size:28px}
     .cards{grid-template-columns:1fr}
-    header .pill{margin-left:0;order:3;flex-basis:100%}
-    .specs th{width:38%}
   }
 </style>
 </head>
@@ -84,84 +57,109 @@
 
   <header>
     <div class="mark" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
-    <div class="name">Cimbar 双工</div>
-    <div class="pill">纯本地 · 不连任何服务器</div>
+    <div class="name">Cimbar 雙工</div>
+    <div class="grow"></div>
+    <button class="u-topbtn u-lang" onclick="UI.toggle()" title="Language">EN</button>
+    <button class="u-topbtn" data-open="dlgHelp" data-i18n-title="nav.help" title="說明書">?</button>
   </header>
 
-  <h1>屏幕传数据，<span>超声传状态</span></h1>
-  <p class="lede">
-    电脑把文件编码成彩色图标矩阵码滚动播放，手机摄像头逐帧读回；
-    手机再用一段人耳听不见的超声，把「收了多少 / 读不动 / 收齐了」回传给电脑。
-    全程不上传、不留记录，断网也能用。
-  </p>
+  <h1><span data-i18n="h1a">螢幕傳檔，</span><span class="ac" data-i18n="h1b">超聲傳狀態</span></h1>
+  <p class="sub" data-i18n="sub">電腦播彩色碼，手機鏡頭讀；手機用超聲回傳狀態。全程不連網。</p>
 
   <div class="cards">
     <a class="card primary" href="duplex.html">
-      <div class="kicker">Computer · 发送端</div>
-      <h2>电脑端 · 双工</h2>
-      <p>选文件、开播彩色码，同时监听手机回传的超声状态：读不动就自动降帧率，收齐就立刻停播。</p>
-      <div class="go">打开 duplex.html
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
-      </div>
+      <div class="ico">▣</div>
+      <h2 data-i18n="c1">電腦端 · 雙工</h2>
+      <div class="go">→</div>
     </a>
     <a class="card" href="recv.html">
-      <div class="kicker">Phone · 接收端</div>
-      <h2>手机端 · 相机</h2>
-      <p>对准屏幕开始读码；点导航里的「双向」开关即可启用超声回传（默认关闭，需要麦克风权限）。</p>
-      <div class="go">打开 recv.html
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
-      </div>
+      <div class="ico">▤</div>
+      <h2 data-i18n="c2">手機端 · 相機</h2>
+      <div class="go">→</div>
     </a>
     <a class="card" href="ultra.html">
-      <div class="kicker">Air · 只走声音</div>
-      <h2>超声信道 · 传文字</h2>
-      <p>不依赖屏幕和摄像头，只靠一段人耳听不见的声音送一句话、一串口令。带两档频带能量表和探测音，用来验证超声到底能不能过。</p>
-      <div class="go">打开 ultra.html
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
-      </div>
+      <div class="ico">◉</div>
+      <h2 data-i18n="c3">超聲波通道</h2>
+      <div class="go">→</div>
     </a>
     <a class="card" href="merge.html">
-      <div class="kicker">Tool · 收尾</div>
-      <h2>分片合并</h2>
-      <p>大档案分片传输后，把手机收到的 part01、part02… 按序拼回原档。全部在本地完成。</p>
-      <div class="go">打开 merge.html
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
-      </div>
+      <div class="ico">⧉</div>
+      <h2 data-i18n="c4">分片合併</h2>
+      <div class="go">→</div>
     </a>
-  </div>
-
-  <section>
-    <h3>怎么用</h3>
-    <ol class="steps">
-      <li><div class="steps-txt"><b>电脑端选文件开播</b><span>编码页内嵌在 duplex.html 里，选好文件后画面就是数据源。</span></div></li>
-      <li><div class="steps-txt"><b>手机对准屏幕</b><span>让彩色码填满取景框。反光、太远、失焦都会掉成功率，电脑会收到降档请求自动放慢。</span></div></li>
-      <li><div class="steps-txt"><b>收齐自动停</b><span>手机拼完文件回传「完成」，电脑立刻停播，不用等整轮播完。</span></div></li>
-    </ol>
-  </section>
-
-  <section>
-    <h3>参数</h3>
-    <table class="specs">
-      <tr><th>下行 · 屏幕码</th><td>约 106 KB/s（850 kbps，15 fps 基准）</td></tr>
-      <tr><th>上行 · 超声</th><td>188 bps，状态包 5 字节 / 0.54 秒</td></tr>
-      <tr><th>超声频带</th><td>18100 – 19500 Hz 主力 / 20500 – 21900 Hz 兜底，8 音 MFSK，双档同时解</td></tr>
-      <tr><th>纠错</th><td>帧内 Reed-Solomon + 跨帧喷泉码，整帧丢失可自愈</td></tr>
-      <tr><th>网络依赖</th><td>无。断网、飞行模式、开热点都能传</td></tr>
-    </table>
-  </section>
-
-  <div class="note">
-    <b>两个前提。</b>
-    一是必须用 HTTPS（或 localhost）打开，否则浏览器不给摄像头和麦克风权限；
-    二是超声频带已压到 18.1–19.5 kHz（实测 18 kHz 以上就听不见了，这一段设备响应也最好）；若个别机型仍发不出来，
-    页面会自己退回纯单向，传输照样完成，只是没有自适应。
   </div>
 
   <footer>
-    <div>经典单向入口：<a href="encoder.html">encoder.html</a> · <a href="recv.html">recv.html</a></div>
-    <div>编解码基于 <a href="https://github.com/sz3/libcimbar" target="_blank" rel="noopener">libcimbar</a> 的 wasm 版本</div>
+    <span id="verStamp"></span>
+    <span><a href="https://github.com/sz3/libcimbar" target="_blank" rel="noopener">libcimbar</a> · <a href="encoder.html" data-i18n="single">單向舊入口</a></span>
   </footer>
 
 </div>
+
+<div class="u-modal u-hide" id="dlgHelp">
+  <div class="u-sheet">
+    <div class="u-sheet-head"><span data-i18n="help.t">說明書</span><button class="u-x" data-close="dlgHelp">✕</button></div>
+    <div class="u-sheet-body">
+      <h4 data-i18n="help.h1">這是什麼</h4>
+      <p data-i18n="help.p1">電腦把檔案編成彩色圖碼矩陣在螢幕上滾動播放，手機鏡頭逐格讀回；手機再用一段人耳聽不見的 18 kHz 超聲，把「收了多少／讀不動／收齊了」回傳給電腦。全程不上傳、不留紀錄，斷網也能用。</p>
+
+      <h4 data-i18n="help.h2">怎麼用</h4>
+      <p data-i18n="help.p2">① 電腦開 duplex.html，選檔案就開始播碼。</p>
+      <p data-i18n="help.p3">② 手機開 recv.html，把彩色碼填滿取景框；反光、太遠、失焦都會掉成功率，電腦收到降檔請求會自動放慢。</p>
+      <p data-i18n="help.p4">③ 收齊後手機自動回傳「完成」，電腦立刻停播，不用等整輪播完。</p>
+
+      <h4 data-i18n="help.h3">參數</h4>
+      <p data-i18n="help.p5">下行（螢幕碼）約 106 KB/s（850 kbps，15 fps 基準）；上行（超聲）188 bps，狀態包 5 字節／0.54 秒。</p>
+      <p data-i18n="help.p6">超聲頻帶：18100–19500 Hz 主力、20500–21900 Hz 兜底，8 音 MFSK 雙檔同時解。糾錯：幀內 Reed–Solomon + 跨幀噴泉碼，整幀丟失可自癒。</p>
+
+      <h4 data-i18n="help.h4">兩個前提</h4>
+      <p data-i18n="help.p7">一、必須用 HTTPS 或 localhost 開啟，否則瀏覽器不給鏡頭與麥克風權限。</p>
+      <p data-i18n="help.p8">二、超聲已壓在 18.1–19.5 kHz（實測 18 kHz 以上就聽不見，這一段裝置響應也最好）。若個別機型仍發不出聲，頁面會自己退回純單向，傳輸照樣完成，只是沒有自適應。</p>
+
+      <h4 data-i18n="help.h5">頁面清單</h4>
+      <p data-i18n="help.p9">index 首頁 · duplex 電腦端 · recv 手機端 · ultra 純聲音通道 · merge 分片合併 · encoder 單向舊入口。</p>
+    </div>
+  </div>
+</div>
+
+<script src="ui.js"></script>
+<script>
+UI.add({
+  'nav.help': ['說明書', 'Help'],
+  'h1a': ['螢幕傳檔，', 'Screen sends files,'],
+  'h1b': ['超聲傳狀態', 'sound sends status'],
+  'sub': ['電腦播彩色碼，手機鏡頭讀；手機用超聲回傳狀態。全程不連網。',
+          'The PC plays colour code; the phone camera reads it; status returns by ultrasound. Nothing leaves the room.'],
+  'c1': ['電腦端 · 雙工', 'PC · duplex'],
+  'c2': ['手機端 · 相機', 'Phone · camera'],
+  'c3': ['超聲波通道', 'Ultrasonic link'],
+  'c4': ['分片合併', 'Merge parts'],
+  'single': ['單向舊入口', 'Legacy one-way'],
+  'help.t': ['說明書', 'Guide'],
+  'help.h1': ['這是什麼', 'What it is'],
+  'help.p1': ['電腦把檔案編成彩色圖碼矩陣在螢幕上滾動播放，手機鏡頭逐格讀回；手機再用一段人耳聽不見的 18 kHz 超聲，把「收了多少／讀不動／收齊了」回傳給電腦。全程不上傳、不留紀錄，斷網也能用。',
+    'The PC encodes a file into a rolling colour code matrix; the phone camera reads frame by frame and reports progress back over inaudible 18 kHz ultrasound. Nothing is uploaded and nothing is logged; it works offline.'],
+  'help.h2': ['怎麼用', 'How to use'],
+  'help.p2': ['① 電腦開 duplex.html，選檔案就開始播碼。', '1. Open duplex.html on the PC and pick a file — playback starts.'],
+  'help.p3': ['② 手機開 recv.html，把彩色碼填滿取景框；反光、太遠、失焦都會掉成功率，電腦收到降檔請求會自動放慢。',
+    '2. Open recv.html on the phone and fill the viewfinder with the code. Glare, distance and blur cost frames; the PC slows down when asked.'],
+  'help.p4': ['③ 收齊後手機自動回傳「完成」，電腦立刻停播，不用等整輪播完。',
+    '3. When complete, the phone reports "done" and the PC stops immediately.'],
+  'help.h3': ['參數', 'Numbers'],
+  'help.p5': ['下行（螢幕碼）約 106 KB/s（850 kbps，15 fps 基準）；上行（超聲）188 bps，狀態包 5 字節／0.54 秒。',
+    'Downlink (screen code) ≈ 106 KB/s (850 kbps at 15 fps); uplink (ultrasound) 188 bps, 5-byte status per 0.54 s.'],
+  'help.p6': ['超聲頻帶：18100–19500 Hz 主力、20500–21900 Hz 兜底，8 音 MFSK 雙檔同時解。糾錯：幀內 Reed–Solomon + 跨幀噴泉碼，整幀丟失可自癒。',
+    'Ultrasound bands: 18100–19500 Hz primary, 20500–21900 Hz fallback, 8-tone MFSK decoded in both. Error control: in-frame Reed–Solomon plus cross-frame fountain code.'],
+  'help.h4': ['兩個前提', 'Two prerequisites'],
+  'help.p7': ['一、必須用 HTTPS 或 localhost 開啟，否則瀏覽器不給鏡頭與麥克風權限。',
+    '1. Must be served over HTTPS or localhost, otherwise the browser withholds camera and mic.'],
+  'help.p8': ['二、超聲已壓在 18.1–19.5 kHz（實測 18 kHz 以上就聽不見，這一段裝置響應也最好）。若個別機型仍發不出聲，頁面會自己退回純單向，傳輸照樣完成，只是沒有自適應。',
+    '2. Ultrasound sits at 18.1–19.5 kHz. If a device cannot emit it, the page falls back to one-way and the transfer still completes.'],
+  'help.h5': ['頁面清單', 'Pages'],
+  'help.p9': ['index 首頁 · duplex 電腦端 · recv 手機端 · ultra 純聲音通道 · merge 分片合併 · encoder 單向舊入口。',
+    'index home · duplex PC · recv phone · ultra sound-only · merge parts · encoder legacy one-way.']
+});
+UI.apply();
+</script>
 </body>
 </html>

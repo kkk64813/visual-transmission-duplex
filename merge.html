@@ -1,37 +1,35 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="zh-Hant">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>分片合并 · Merge parts</title>
+<title>分片合併 · Merge parts</title>
+<link rel="stylesheet" href="ui.css">
 <style>
   :root{
     --bg:#f5f7f6; --surface:#fff; --ink:#16211e; --muted:#6c7a75;
-    --accent:#0e7c66; --accent-2:#0a5f4f; --line:#e1e8e4; --warn-bg:#fdf6e7;
+    --accent:#0e7c66; --accent-2:#0a5f4f; --line:#e1e8e4;
     --shadow:0 2px 14px rgba(20,40,35,.07);
   }
   *{box-sizing:border-box}
   body{margin:0;background:var(--bg);color:var(--ink);
-    font:15px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif}
-  header{display:flex;align-items:center;gap:10px;padding:14px 16px;background:rgba(255,255,255,.92);
-    border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5;backdrop-filter:blur(8px)}
+    font:15px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang TC","Microsoft JhengHei","PingFang SC",sans-serif}
+  header{display:flex;align-items:center;gap:8px;padding:10px 14px;background:rgba(255,255,255,.92);
+    border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5;backdrop-filter:blur(8px);flex-wrap:wrap}
   .mark{width:26px;height:26px;border-radius:7px;background:linear-gradient(135deg,#0e7c66,#0a5f4f)}
   .brand{font-weight:700}
   .brand small{display:block;font-weight:400;color:var(--muted);font-size:11px;letter-spacing:.04em}
   main{max-width:700px;margin:0 auto;padding:16px}
   .card{background:var(--surface);border:1px solid var(--line);border-radius:14px;
     box-shadow:var(--shadow);padding:16px;margin-bottom:14px}
-  h3{margin:0 0 10px;font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
+  h3{margin:0 0 10px;font-size:13px;color:var(--accent-2)}
   button{padding:10px 16px;border-radius:10px;border:1px solid var(--line);background:#fff;
     color:var(--ink);font:inherit;font-weight:600;cursor:pointer}
   button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
   button.primary:hover{background:var(--accent-2)}
   button:disabled{opacity:.45;cursor:not-allowed}
-  ol{margin:10px 0 0;padding-left:20px;font-size:13px;color:var(--muted)}
+  ol{margin:10px 0 0;padding-left:20px;font-size:13px;color:var(--ink)}
   li{margin:3px 0;word-break:break-all}
-  .hint{font-size:12px;color:var(--muted);line-height:1.75;margin-top:8px}
-  .warn{background:var(--warn-bg);border:1px solid #f0e2c4;color:#7a5416;border-radius:10px;
-    padding:10px 12px;font-size:13px;line-height:1.7;margin-bottom:12px}
   .prog{height:6px;background:#eef3f1;border-radius:6px;overflow:hidden;margin-top:10px}
   .prog i{display:block;height:100%;width:0;background:var(--accent);transition:width .25s}
   a{color:var(--accent)}
@@ -41,36 +39,73 @@
 <body>
 <header>
   <div class="mark"></div>
-  <div class="brand">分片合并<small>Merge · 全部在本地完成，不上传</small></div>
+  <div class="brand"><span data-i18n="brand">分片合併</span><small data-i18n="brandSub">全部在本機完成，不上傳</small></div>
+  <div style="flex:1"></div>
+  <button class="u-topbtn u-lang" onclick="UI.toggle()" title="Language">EN</button>
+  <button class="u-topbtn" data-open="dlgHelp" title="說明書">?</button>
+  <a class="u-topbtn u-home" href="index.html">⌂ <b data-i18n="nav.home">首頁</b></a>
 </header>
 
 <main>
   <div class="card">
-    <h3>1 选分片</h3>
+    <h3 data-i18n="s1">① 選分片</h3>
     <input type="file" id="files" multiple accept="*/*" style="font-size:13px">
-    <div class="hint">把手机收到的 <b>xxx.part01 / .part02 …</b> 全部选进来（可以多选）。按文件名排序后拼接，和原档一字不差。</div>
   </div>
 
   <div class="card">
-    <h3>2 检查顺序</h3>
-    <ol id="list"><li style="list-style:none;padding:0">还没选文件</li></ol>
-    <div class="hint" id="sum"></div>
+    <h3 data-i18n="s2">② 檢查順序</h3>
+    <ol id="list"><li style="list-style:none;padding:0" data-i18n="empty">還沒選檔案</li></ol>
+    <div id="sum" style="font-size:13px;margin-top:6px"></div>
   </div>
 
   <div class="card">
-    <h3>3 合并</h3>
-    <button class="primary" id="btnMerge" disabled onclick="Merge.run()">合并并下载</button>
+    <h3 data-i18n="s3">③ 合併</h3>
+    <button class="primary" id="btnMerge" disabled onclick="Merge.run()" data-i18n="btn.merge">合併並下載</button>
     <div class="prog"><i id="prog"></i></div>
-    <div class="hint" id="msg"></div>
-  </div>
-
-  <div class="warn">
-    分片必须是同一档设置下切出来的（同一份文件、同一个每片大小）。如果某一片的序号对不上，
-    合并出来的文件会坏——先用接收端把缺的那片补回来，凑齐再合并。
+    <div id="msg" style="font-size:13px;margin-top:8px"></div>
   </div>
 </main>
 
-<footer>返回 <a href="./index.html">首页</a> · 发送端见 <a href="./duplex.html">duplex</a></footer>
+<footer><span id="verStamp"></span></footer>
+
+<div class="u-modal u-hide" id="dlgHelp">
+  <div class="u-sheet">
+    <div class="u-sheet-head"><span data-i18n="help.t">說明書</span><button class="u-x" data-close="dlgHelp">✕</button></div>
+    <div class="u-sheet-body">
+      <h4 data-i18n="help.h1">怎麼用</h4>
+      <p data-i18n="help.p1">把手機收到的 xxx.part01 / .part02 … 全部選進來（可多選）。按檔名序號排序後拼接，與原檔一字不差。</p>
+      <h4 data-i18n="help.h2">注意</h4>
+      <p data-i18n="help.p2">分片必須是同一組設定切出來的（同一份檔案、同一個每片大小）。若某片序號對不上，合併出來的檔案會壞；先用接收端把缺的那片補回來，湊齊再合。</p>
+    </div>
+  </div>
+</div>
+
+<script src="ui.js"></script>
+<script>
+UI.add({
+  'nav.home': ['首頁', 'Home'],
+  'brand': ['分片合併', 'Merge parts'],
+  'brandSub': ['全部在本機完成，不上傳', 'All local, nothing uploaded'],
+  's1': ['① 選分片', '1 · Pick parts'],
+  's2': ['② 檢查順序', '2 · Check order'],
+  's3': ['③ 合併', '3 · Merge'],
+  'btn.merge': ['合併並下載', 'Merge & download'],
+  'empty': ['還沒選檔案', 'No files yet'],
+  'piece': ['第 {n} 片', 'Part {n}'],
+  'merging': ['合併中…', 'Merging…'],
+  'done': ['完成：', 'Done: '],
+  'sum': ['合併後：', 'Merged: '],
+  'count': ['共 {n} 片', '{n} parts'],
+  'help.t': ['說明書', 'Guide'],
+  'help.h1': ['怎麼用', 'How to use'],
+  'help.p1': ['把手機收到的 xxx.part01 / .part02 … 全部選進來（可多選）。按檔名序號排序後拼接，與原檔一字不差。',
+    'Select every xxx.part01 / .part02 … received on the phone (multi-select works). They are sorted by part number and joined byte-for-byte.'],
+  'help.h2': ['注意', 'Caution'],
+  'help.p2': ['分片必須是同一組設定切出來的（同一份檔案、同一個每片大小）。若某片序號對不上，合併出來的檔案會壞；先用接收端把缺的那片補回來，湊齊再合。',
+    'All parts must come from the same settings. A missing or mismatched part corrupts the result — fetch it again from the receiver first.']
+});
+UI.apply();
+</script>
 
 <script>
 var Merge = (function () {
@@ -87,19 +122,20 @@ var Merge = (function () {
     var btn = document.getElementById('btnMerge');
     list.innerHTML = '';
     if (!picked.length) {
-      list.innerHTML = '<li style="list-style:none;padding:0">还没选文件</li>';
+      list.innerHTML = '<li style="list-style:none;padding:0">' + UI.t('empty') + '</li>';
       sum.textContent = '';
       btn.disabled = true;
       return;
     }
+    var pn = UI.t('piece');
     picked.forEach(function (f, i) {
       var li = document.createElement('li');
-      li.textContent = '第 ' + (i + 1) + ' 片 · ' + f.name + ' · ' + fmt(f.size);
+      li.textContent = pn.replace('{n}', i + 1) + ' · ' + f.name + ' · ' + fmt(f.size);
       list.appendChild(li);
     });
     var total = picked.reduce(function (a, b) { return a + b.size; }, 0);
     var base = picked[0].name.replace(/\.part\d+/i, '');
-    sum.textContent = '合并后：' + base + ' · ' + fmt(total) + ' · 共 ' + picked.length + ' 片';
+    sum.textContent = UI.t('sum') + base + ' · ' + fmt(total) + ' · ' + UI.t('count').replace('{n}', picked.length);
     btn.disabled = false;
   }
 
@@ -118,6 +154,8 @@ var Merge = (function () {
     render();
   });
 
+  window.addEventListener('ui-lang', render);
+
   return {
     run: function () {
       if (!picked.length) return;
@@ -125,7 +163,7 @@ var Merge = (function () {
       var msg = document.getElementById('msg');
       var prog = document.getElementById('prog');
       btn.disabled = true;
-      msg.textContent = '合并中…';
+      msg.textContent = UI.t('merging');
       var base = picked[0].name.replace(/\.part\d+/i, '');
       var blob = new Blob(picked, { type: 'application/octet-stream' });
       var url = URL.createObjectURL(blob);
@@ -136,7 +174,7 @@ var Merge = (function () {
       document.body.appendChild(a);
       a.click();
       setTimeout(function () { document.body.removeChild(a); }, 500);
-      msg.innerHTML = '完成：<a href="' + url + '" download="' + (base || 'merged.bin') + '">' + (base || 'merged.bin') + '</a>（' + fmt(blob.size) + '）';
+      msg.innerHTML = UI.t('done') + '<a href="' + url + '" download="' + (base || 'merged.bin') + '">' + (base || 'merged.bin') + '</a>（' + fmt(blob.size) + '）';
       btn.disabled = false;
     }
   };

@@ -1,7 +1,7 @@
 /* 接收端 Service Worker：网络优先，断网回缓存（保证离线也能收文件）
  * 编解码资源体积大，装一次就预缓存，避免手机每次冷启动重拉 wasm。
  */
-var CACHE = 'cimbar-recv-v2';
+var CACHE = 'cimbar-recv-v3';
 var CORE = [
   './recv.html',
   './cimbar_js.2026-01-20T0312.js',
@@ -11,7 +11,9 @@ var CORE = [
   './zstd.2026-01-20T0312.js',
   './main.2026-01-20T0312.js',
   './duplex.js',
-  './duplex-tx.js'
+  './duplex-tx.js',
+  './ui.js',
+  './ui.css'
 ];
 
 self.addEventListener('install', function (e) {

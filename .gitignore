@@ -11,3 +11,5 @@ _*.err
 _ui.js
 _patch.js
 _chk*.js
+_ui2.js
+_ui3.js

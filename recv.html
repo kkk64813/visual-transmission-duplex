@@ -11,6 +11,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, user-scalable=no">
   <link rel="manifest" href="pwa-recv.2026-01-20T0312.json">
+  <link rel="stylesheet" href="ui.css">
 </head>
 
 <body>
@@ -641,13 +642,15 @@
     <div id="nav-content" tabindex="-1">
       <ul>
         <li class="modesel">
-          <h4>Mode</h4>
+          <h4 data-i18n="nav.mode">模式</h4>
           <a class="mode-auto" href="javascript:void(0)" onclick="Recv.setMode('Auto')">Auto</a>
           <a class="mode-b" id="mode-val" href="javascript:void(0)" onclick="Recv.setMode(this.textContent)">B</a>
         </li>
-        <li class="small"><a href="javascript:void(0)" onclick="Recv.showDebug()">Debug</a></li>
-        <li class="small"><a href="javascript:void(0)" id="duplex-toggle" onclick="DuplexTx.toggle()">双向</a></li>
-        <li class="small"><a href="javascript:void(0)" onclick="Recv.toggleFullscreen()">Fullscreen</a></li>
+        <li class="small"><a href="javascript:void(0)" id="duplex-toggle" onclick="DuplexTx.toggle()" data-i18n="nav.duplex">雙向</a></li>
+        <li class="small"><a href="javascript:void(0)" onclick="Recv.toggleFullscreen()" data-i18n="nav.full">全螢幕</a></li>
+        <li class="small"><a href="javascript:void(0)" onclick="UI.open('dlgHelp')" data-i18n="nav.help">說明書</a></li>
+        <li class="small"><a href="javascript:void(0)" onclick="UI.toggle()" data-i18n="nav.lang">語言：繁中</a></li>
+        <li class="small"><a href="index.html" data-i18n="nav.home">回首頁</a></li>
         <!-- Removed GitHub and Android app links as requested -->
       </ul>
     </div>
@@ -696,7 +699,7 @@
     window.DuplexUI = function (s, n) {
       var el = document.getElementById('duplex-status');
       var btn = document.getElementById('duplex-toggle');
-      if (btn) { btn.textContent = DuplexTx.state.enabled ? '双向：开' : '双向'; btn.classList.toggle('on', !!DuplexTx.state.enabled); }
+      if (btn) { btn.textContent = DuplexTx.state.enabled ? UI.t('tx.on') : UI.t('nav.duplex'); btn.classList.toggle('on', !!DuplexTx.state.enabled); }
       if (!el) return;
       if (!s) { el.innerHTML = '双向已关闭 · 已回传 ' + (n || 0) + ' 包'; return; }
       el.innerHTML = '成功率 ' + (s.ratio * 100).toFixed(0) + '% · 需补 ' + s.need +
@@ -706,6 +709,52 @@
   </script>
 
   <script src="cimbar_js.2026-01-20T0312.js"></script>
+
+  <div class="u-modal u-hide" id="dlgHelp">
+    <div class="u-sheet">
+      <div class="u-sheet-head"><span data-i18n="help.t">說明書</span><button class="u-x" data-close="dlgHelp">✕</button></div>
+      <div class="u-sheet-body">
+        <h4 data-i18n="help.h1">怎麼讀</h4>
+        <p data-i18n="help.p1">點左上角選單鈕開抽屜。把電腦螢幕上的彩色碼填滿取景框；出現綠色角標就表示對上了。反光、距離太遠、失焦都會掉成功率。</p>
+
+        <h4 data-i18n="help.h2">雙向</h4>
+        <p data-i18n="help.p2">抽屜裡點「雙向」才會開啟揚聲器，把手機收到的進度與缺塊用超聲回傳給電腦（需要一次點擊授權）。開著它電腦才知道該放慢還是可以提速；關掉就退回純單向，照樣能收完。</p>
+
+        <h4 data-i18n="help.h3">模式</h4>
+        <p data-i18n="help.p3">Auto 會自己認碼；已鎖定某一種時可手動選，並在電腦端按「對齊手機 mode」。兩邊模式不一致會一直讀不動。</p>
+
+        <h4 data-i18n="help.h4">畫面</h4>
+        <p data-i18n="help.p4">底部綠條是這一輪的進度。全螢幕可把取景框鋪滿；右下角圓形鈕回首頁。</p>
+      </div>
+    </div>
+  </div>
+
+  <script src="ui.js"></script>
+  <script>
+  UI.add({
+    'nav.mode': ['模式', 'Mode'],
+    'nav.duplex': ['雙向', 'Duplex'],
+    'nav.full': ['全螢幕', 'Fullscreen'],
+    'nav.help': ['說明書', 'Guide'],
+    'nav.lang': ['語言：繁中', 'Language: EN'],
+    'nav.home': ['回首頁', 'Home'],
+    'tx.on': ['雙向：開', 'Duplex: on'],
+    'help.t': ['說明書', 'Guide'],
+    'help.h1': ['怎麼讀', 'How to read'],
+    'help.p1': ['點左上角選單鈕開抽屜。把電腦螢幕上的彩色碼填滿取景框；出現綠色角標就表示對上了。反光、距離太遠、失焦都會掉成功率。',
+      'Tap the menu button top-left. Fill the viewfinder with the code on the PC screen; green corners mean it is locked. Glare, distance and blur cost frames.'],
+    'help.h2': ['雙向', 'Duplex'],
+    'help.p2': ['抽屜裡點「雙向」才會開啟揚聲器，把手機收到的進度與缺塊用超聲回傳給電腦（需要一次點擊授權）。開著它電腦才知道該放慢還是可以提速；關掉就退回純單向，照樣能收完。',
+      'Tapping "Duplex" in the drawer enables the speaker and reports progress back by ultrasound (needs one tap to authorise). With it on, the PC knows whether to slow down; off means one-way, which still completes.'],
+    'help.h3': ['模式', 'Mode'],
+    'help.p3': ['Auto 會自己認碼；已鎖定某一種時可手動選，並在電腦端按「對齊手機 mode」。兩邊模式不一致會一直讀不動。',
+      'Auto detects the mode; if one is locked you can pick it manually and press "Match phone mode" on the PC. Mismatched modes never decode.'],
+    'help.h4': ['畫面', 'Screen'],
+    'help.p4': ['底部綠條是這一輪的進度。全螢幕可把取景框鋪滿；右下角圓形鈕回首頁。',
+      'The green bar at the bottom is this round\'s progress. Fullscreen fills the viewfinder; the round button bottom-right goes home.']
+  });
+  UI.apply();
+  </script>
 
 </body>
 

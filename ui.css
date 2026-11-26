@@ -1,0 +1,32 @@
+/* 共用外殼：頂欄按鈕 / 說明書彈窗 / 頁腳版本戳
+ * 只提供樣式，行為在 ui.js。三頁（index / duplex / recv）共用同一套視覺。 */
+:root{
+  --u-bg:#f5f7f6; --u-ink:#16211e; --u-muted:#6c7a75; --u-line:#e1e8e4;
+  --u-accent:#0e7c66; --u-deep:#0a5f4f; --u-soft:#eef8f4;
+}
+.u-topbtn{
+  display:inline-flex;align-items:center;gap:5px;padding:7px 10px;font-size:12.5px;border-radius:9px;
+  border:1px solid var(--u-line);background:#fff;color:var(--u-ink);font-weight:600;
+  cursor:pointer;text-decoration:none;font-family:inherit;line-height:1.2;
+}
+.u-topbtn:hover{border-color:#cfded8}
+.u-topbtn.u-home{border-color:var(--u-accent);color:var(--u-deep);background:var(--u-soft)}
+.u-topbtn.u-home b{font-weight:700}
+.u-chipline{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;color:var(--u-muted)}
+
+.u-modal{position:fixed;left:0;top:0;right:0;bottom:0;background:rgba(12,22,19,.58);z-index:900;
+  display:flex;align-items:flex-end;justify-content:center}
+.u-modal.u-hide{display:none!important}
+.u-sheet{background:#fff;width:100%;max-width:760px;max-height:88vh;border-radius:16px 16px 0 0;
+  display:flex;flex-direction:column;box-shadow:0 -14px 50px rgba(0,0,0,.30);outline:1px solid var(--u-line)}
+.u-sheet-head{display:flex;align-items:center;padding:14px 16px;border-bottom:1px solid var(--u-line);
+  font-weight:700;font-size:14px;color:var(--u-deep)}
+.u-sheet-head .u-x{margin-left:auto;border:none;background:none;font-size:18px;color:var(--u-muted);cursor:pointer;padding:2px 6px}
+.u-sheet-body{padding:14px 16px 26px;overflow:auto;color:#33413c}
+.u-sheet-body h4{margin:16px 0 6px;font-size:13px;color:var(--u-deep);letter-spacing:.04em}
+.u-sheet-body p{margin:0;font-size:13.5px;line-height:1.8}
+.u-sheet-body .u-row{display:flex;gap:8px;flex-wrap:wrap;margin:8px 0 2px}
+.u-sheet-body button{font:inherit;font-weight:600;cursor:pointer;border-radius:9px;padding:8px 13px;
+  background:#fff;color:var(--u-ink);border:1px solid var(--u-line)}
+.u-sheet-body button:hover{border-color:#cfded8;background:#f7faf8}
+.u-ver{color:var(--u-muted);font-size:12px}

@@ -334,7 +334,7 @@
 /* ================= 版本 / 語系 / 彈窗 / 紀錄 =================
  * 這一層獨立於 App 內核之外：只碰 DOM，不碰音頻。
  * 目的：畫面乾淨、按鈕少、紀錄能一鍵帶走。 */
-var VER = { v: 'v2026-11-26a', t: '2026-11-26 08:45' };
+var VER = { v: 'v2026-11-26b', t: '2026-11-26 08:57' };
 
 /* ---------- 彈窗 ---------- */
 var Dlg = {
@@ -610,7 +610,7 @@ var Lang = (function () {
     var btn = document.getElementById('btnLang');
     if (btn) btn.textContent = lang === 'en' ? '中' : 'EN';
     document.documentElement.lang = lang === 'en' ? 'en' : 'zh-Hant';
-    try { localStorage.setItem('ultra-lang', lang); } catch (e) { }
+    try { localStorage.setItem('vt-lang', lang); } catch (e) { }
   }
   function toggle() { apply(cur === 'zh' ? 'en' : 'zh'); }
   return { apply: apply, toggle: toggle, get: function () { return cur; } };
@@ -622,11 +622,11 @@ var Lang = (function () {
   if (el) el.textContent = VER.v + ' · 更新 ' + VER.t;
   var sub = document.querySelector('.brand small');
   if (sub) sub.textContent = I18N['app.sub'][0];
-  try { if (localStorage.getItem('ultra-lang') === 'en') Lang.apply('en'); } catch (e) { }
+  try { if (localStorage.getItem('vt-lang') === 'en') Lang.apply('en'); } catch (e) { }
 })();
 </script>
 
-<script src="ultra-core.js?v=20261126a"></script>
+<script src="ultra-core.js?v=20261126b"></script>
 <script>
 var App = (function () {
   /* ===== 单档单速（2026-11-25 起）=====
