@@ -339,7 +339,7 @@
 /* ================= 版本 / 語系 / 彈窗 / 紀錄 =================
  * 這一層獨立於 App 內核之外：只碰 DOM，不碰音頻。
  * 目的：畫面乾淨、按鈕少、紀錄能一鍵帶走。 */
-var VER = { v: 'v2026-11-26x', t: '2026-11-26 19:00' };
+var VER = { v: 'v2026-11-26y', t: '2026-11-26 19:30' };
 
 /* ---------- 彈窗 ---------- */
 var Dlg = {
@@ -652,7 +652,7 @@ var Lang = (function () {
 })();
 </script>
 
-<script src="ultra-core.js?v=20261126x"></script>
+<script src="ultra-core.js?v=20261126y"></script>
 <script>
 var App = (function () {
   /* ===== 单档单速（2026-11-25 起）=====
@@ -1357,9 +1357,12 @@ var App = (function () {
       var pair2 = tonePairOf(e2, band);
       var pk = Ultra.peakFreq(slice, sr, band.f0 - 120, band.f0 + band.df * 7 + 120, 80);
       var fl2 = gateLatestE.floor || 0;
-      var snr2 = fl2 > 0 ? 10 * Math.log10(Math.max(e2.peak, 1e-18) / fl2) : barDb.hf || 0;
+      var snr2 = fl2 > 0 ? 10 * Math.log10(Math.max(e2.peak, 1e-18) / fl2) : -99;
       lastSnr = snr2; window.__snr = snr2;
-      showFreq(snr2 > 3, pk, pair2, snr2, slice, sr);
+      /* 「锁上了」必须建立在「有底噪参考」之上：floor 还没量出来时 snr 是 -99，
+       * 以前这里用 barDb 兜底，噪声比值 10–14 dB 会被当成有信号，
+       * 屏幕上就冒出 18100 · 19300 这种根本没在响的数字。 */
+      showFreq(fl2 > 0 && snr2 > 6, pk, pair2, snr2, slice, sr);
       updateDbg();
     }
     maybeAck();
@@ -1441,10 +1444,11 @@ var App = (function () {
     var pk = Ultra.peakFreq(slice, sr, band.f0 - 120, band.f0 + band.df * 7 + 120, 80);
     var pair = tonePairOf(e, band);
     var fl = gateLatestE.floor || 0;
-    var snr = fl > 0 ? 10 * Math.log10(Math.max(e.peak, 1e-18) / fl) : (barDb.hf || 0);
+    var snr = fl > 0 ? 10 * Math.log10(Math.max(e.peak, 1e-18) / fl) : -99;
     lastSnr = snr; window.__snr = snr;
-    /* 门限只用来决定「大字要不要印具体数字」，音量条不受它影响。 */
-    var hot = snr > 3;
+    /* 门限只用来决定「大字要不要印具体数字」，音量条不受它影响。
+     * 必须有 floor 参考、且高出 6 dB 才算锁上，否则噪声比值的 10–14 dB 会冒充信号。 */
+    var hot = fl > 0 && snr > 6;
     showFreq(hot, pk, pair, snr, slice, sr);
     /* 手机屏幕上必须能直接看出「同步头到底命中了几个」——这是「听到了却解不出」唯一的判据。
      * 0/8：解码器根本没形成候选（多半是缩放/节奏对不上）；6~7/8：锁门开得太严。 */
@@ -1894,7 +1898,7 @@ var App = (function () {
 
   function sendReliable(packets, onProgress, onDone) {
     var tok = ++sendSeq;                 // 每次发送一个令牌：旧链的回调一律作废，不许再往下跑
-    var round = 1, MAX_ROUNDS = 6;
+    var round = 1, MAX_ROUNDS = 6, noAckN = 0, zeroAckN = 0;
     var t0 = performance.now(), bytes = 0;
     for (var q = 0; q < packets.length; q++) bytes += (packets[q].data ? packets[q].data.length : 0) + 4;
     var pending = [];
@@ -1961,21 +1965,39 @@ var App = (function () {
         log('等待对方回执…（约 8 秒）');
         ackListen(8000, function (ack) {
           if (!alive()) return;
-          if (!ack) { log('没收到回执：这一轮当作全部失败，重发全部', '#b4791f'); round++; loop(); return; }
+          if (!ack) {
+            noAckN++;
+            /* 对方连「我听到了」都不回：再铺一遍完整内容只是烧时间。
+             * 一轮没回执就停，留一行明确的原因给用户。 */
+            finish(false, '沒收到任何回執（第 ' + noAckN + ' 輪）：對方可能沒在監聽、音量為 0 或距離太遠。已停止，不再重複整輪發送');
+            return;
+          }
+          noAckN = 0;
           if (ack.round === 255) {
             log('對方已上線（收到就緒握手）：對方在監聽、自動回執也開著，問題只在資料能不能過去', '#0a5f4f');
             round++; loop(); return;
           }
           if (ack.total === 0) {
             var dg = ack.diag;
+            zeroAckN++;
             log('对方回执「听到了、但一包都没解出」' +
               (dg ? '｜對方：' + peerDesc(dg.flags) + ' · 同步最好 ' + dg.hits + '/8 · 邊距 ' + dg.margin + ' dB · 對方聽到 ' + dg.level + ' dB' : '') +
               '：数据链路没解出来。' + (dg && dg.hits === 0 ? '对方连同步头都没对上，多半是音量不够或频率偏太多。' : ''),
               '#b4791f');
+            /* 听到但解不出 = 链路层面的问题，再铺 11 包也没用。
+             * 先只重发头 2 包探路；若对方还是 0，就停下让用户调音量/距离，不再空烧。 */
+            if (zeroAckN >= 2) {
+              finish(false, '對方連兩輪「聽得到、解不出」：先調音量／拉近距離／確認兩端同為雙音 4bit，再重試。已停止空發');
+              return;
+            }
+            var probeList = pending.slice(0, 2);
+            log('先只重發前 ' + probeList.length + ' 包探路（不再整輪鋪一遍）', '#b4791f');
+            pending = probeList;
             round++;
             loop();
             return;
           }
+          zeroAckN = 0;
           var miss = ack.missing();
           log('收到回执 #' + ack.round + (ackBandUsed ? '（' + ackBandUsed + ' 帶）' : '') + '：对方已收 ' + (ack.total - miss.length) + '/' + ack.total +
             (miss.length ? '，缺 ' + miss.map(function (x) { return x + 1; }).join('、') : '，已齐'), '#0a5f4f');
@@ -1992,8 +2014,13 @@ var App = (function () {
       preflight(6000, function (ok) {
         if (!alive()) return;
         skipRuler = true;                // 標尺剛播過，首輪不用再播
-        if (ok) log('預檢完成，開始正式傳輸');
-        else log('預檢未通過，仍開始發（這一輪只能靠收端回執翻盤）', '#b4791f');
+        if (!ok) {
+          /* 對方連一條回執都沒有 —— 這時候把 11 包整輪鋪 6 遍純屬燒時間，
+           * 直接停下來，日誌寫清楚該檢查什麼。 */
+          finish(false, '預檢沒收到回執，已停止發送（對方沒在監聽／音量為 0／距離太遠）。要硬發請把「等回執」切成關');
+          return;
+        }
+        log('預檢完成，開始正式傳輸');
         /* 預檢回呼是整條發送鏈的起點：這裡只要拋一次例外，看起來就是「按下發送後什麼都沒發生」
          * （v-h 真機日誌就是：預檢②寫完「回执监听结果」之後直接沒了，連 TX 都沒開始）。
          * 所以整個起跑包一層 try/catch，出事一定落進日誌。 */
