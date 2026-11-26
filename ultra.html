@@ -339,7 +339,7 @@
 /* ================= 版本 / 語系 / 彈窗 / 紀錄 =================
  * 這一層獨立於 App 內核之外：只碰 DOM，不碰音頻。
  * 目的：畫面乾淨、按鈕少、紀錄能一鍵帶走。 */
-var VER = { v: 'v2026-11-26h', t: '2026-11-26 15:02' };
+var VER = { v: 'v2026-11-26i', t: '2026-11-26 15:08' };
 
 /* ---------- 彈窗 ---------- */
 var Dlg = {
@@ -511,6 +511,10 @@ window.REC = (function () {
     if (window.Log) Log.render();
   }
 
+  /* preflight 在另一個 IIFE 裡，碰不到這個 rx；以前直接寫 rx.pre 會拋 ReferenceError，
+   * 把預檢失敗分支整段吃掉（日誌沒有「預檢未通過」、TX 也不會開始）。 */
+  function setPre(v) { rx.pre = v; }
+
   function copy() {
     var txt = report();
     var stat = document.getElementById('logStat');
@@ -525,7 +529,7 @@ window.REC = (function () {
     }
   }
 
-  return { line: line, raw: raw, diag: diag, pkt: pkt, rxDone: rxDone, txDone: txDone, report: report, clear: clear, copy: copy, rx: rx, tx: tx, started: T0 };
+  return { line: line, raw: raw, diag: diag, pkt: pkt, rxDone: rxDone, txDone: txDone, report: report, clear: clear, copy: copy, setPre: setPre, rx: rx, tx: tx, started: T0 };
 })();
 
 var Log = {
@@ -644,7 +648,7 @@ var Lang = (function () {
 })();
 </script>
 
-<script src="ultra-core.js?v=20261126h"></script>
+<script src="ultra-core.js?v=20261126i"></script>
 <script>
 var App = (function () {
   /* ===== 单档单速（2026-11-25 起）=====
@@ -1430,11 +1434,12 @@ var App = (function () {
 
   /* ---- 回执信号强度表 ----   * 以前发端只听「解出/没解出」，分不清三种情况：对方根本没发、发了但电脑听不见、听得到却解不开。
    * 这里在回执麦克风上直接量 18.1k 那档的峰值与相对底噪的强度，实时显示在发送端。 */
-  var ackFloorDb = null, ackShowAt = 0, ackLastDb = -99, ackLastF = 0, ackMaxDbfs = -120;
+  var ackFloorDb = null, ackShowAt = 0, ackLastDb = -99, ackLastF = 0, ackMaxDbfs = -120, ackBandUsed = '';
   function ackMeter(c) {
     var sr = ctx ? ctx.sampleRate : 48000;
-    var b = Ultra.bandByKey(ACK_BAND);
-    var e = Ultra.bandEnergy(c, sr, b).peak;
+    /* 兩檔都量，取大的：回執可能在 18.1k 也可能在 20.5k（跨版本/設定不一致時就是這樣） */
+    var e = Math.max(Ultra.bandEnergy(c, sr, Ultra.bandByKey('mid')).peak,
+                     Ultra.bandEnergy(c, sr, Ultra.bandByKey('hi')).peak);
     var db = 10 * Math.log10(e + 1e-18);
     /* 地板同样「只跟着安静降、绝不追着信号涨」：对方回执一响就是十几 dB，
      * 旧写法在这种持续播放里会把地板抬到信号附近，之后自然判成「安静」。 */
@@ -1448,7 +1453,7 @@ var App = (function () {
     var now = performance.now();
     if (now - ackShowAt < 120) return;
     ackShowAt = now;
-    var pk = Ultra.peakFreq(c, sr, 17500, 19600, 50);
+    var pk = Ultra.peakFreq(c, sr, 17500, 22100, 50);
     ackLastF = pk.f;
     var el = $('ackSig');
     if (!el) return;
@@ -1479,23 +1484,36 @@ var App = (function () {
       /* 只挂 18.1k / 24ms 一个解码器：回执固定走这一档（电脑麦克风上限约 21.2k，22.3k 收不到）。
        * 解码器同时把所有「同步/CRC」计数留在 stat 里，监听结束时原样报出来 —— 这样
        * 「对方根本没发声」和「发了但我解不出」一眼能分开。 */
-      var d = new Ultra.StreamDecoder(ctx.sampleRate, Ultra.bandByKey(ACK_BAND), ACK_SP, dualOn());
-      var maxHits = 0, echoN = 0, echoTypes = [];
-      d.onPacket = function (p) {
-        var pl = Ultra.parsePayload(p);
-        if (pl && pl.type === 'ack') { ackGot = pl; if (pl.round === 255) rx.online = 1; if (pl.diag) rx.peer = pl.diag; return; }
-        /* 不是回執的封包，只可能是自己喇叭的尾巴被麥克風收進來（本機沒開回聲消除）。
-         * 以前這種「自己解自己」會被算進「解出 N」，讓日誌看起來像對方回了東西，
-         * 實際上對方一句話都沒說 —— 這一版把它單獨計數並在日誌裡點명。 */
-        echoN++;
-        var t = pl ? pl.type : 'null';
-        if (echoTypes.indexOf(t) < 0) {
-          echoTypes.push(t);
-          log('回執通道解出非回執封包：type=' + t + (pl && pl.seq ? ' seq=' + pl.seq + '/' + pl.total : '') + '（不是回執，多半是自己喇叭尾巴）', '#b4791f');
-        }
-      };
-      d.onError = function (kind) { if (kind === 'sync' && d.lastHits > maxHits) maxHits = d.lastHits; };
-      ackDec = [d];
+      /* 同時掛 18.1k 與 20.5k 兩個回執解碼器：兩端頁面版本/設定可能不一樣（一邊 20.5k、一邊 18.1k），
+       * 只聽自己那一檔就會出現「對方明明回了、我卻什麼都收不到」（v-h 的真機情況）。
+       * 發哪一檔由設定決定，收則兩檔都收，跨版本也不會斷。
+       * 解码器同时把所有「同步/CRC」计数留在 stat 里，监听结束时原样报出来。 */
+      var ackBands = [Ultra.bandByKey('mid'), Ultra.bandByKey('hi')];
+      var ds = [], maxHitsArr = [0, 0], echoN = 0, echoTypes = [], ackBandSeen = '';
+      ackBands.forEach(function (bb, bi) {
+        var dd = new Ultra.StreamDecoder(ctx.sampleRate, bb, ACK_SP, dualOn());
+        dd.onPacket = function (p) {
+          var pl = Ultra.parsePayload(p);
+          if (pl && pl.type === 'ack') {
+            if (!ackGot) ackBandSeen = bb.name;
+            ackGot = pl;
+            if (pl.round === 255) rx.online = 1;
+            if (pl.diag) rx.peer = pl.diag;
+            ackBandUsed = bb.name;
+            return;
+          }
+          /* 不是回執的封包，只可能是自己喇叭的尾巴被麥克風收進來（本機沒開回聲消除）。 */
+          echoN++;
+          var t = pl ? pl.type : 'null';
+          if (echoTypes.indexOf(t) < 0) {
+            echoTypes.push(t);
+            log('回執通道解出非回執封包：type=' + t + (pl && pl.seq ? ' seq=' + pl.seq + '/' + pl.total : '') + '（不是回執，多半是自己喇叭尾巴）', '#b4791f');
+          }
+        };
+        dd.onError = function (kind) { if (kind === 'sync' && dd.lastHits > maxHitsArr[bi]) maxHitsArr[bi] = dd.lastHits; };
+        ds.push(dd);
+      });
+      ackDec = ds;
       ackProc = ctx.createScriptProcessor(4096, 1, 1);
       ackProc.onaudioprocess = function (ev) {
         var c = new Float32Array(ev.inputBuffer.getChannelData(0));
@@ -1503,7 +1521,14 @@ var App = (function () {
         ackMeter(c);
       };
       ackStat = function () {
-        return { sync: d.stat.sync, crc: d.stat.crc, pk: d.stat.pk - echoN, echo: echoN, maxHits: maxHits, hits: d.lastHits };
+        var mh = Math.max(maxHitsArr[0], maxHitsArr[1]);
+        return {
+          sync: ds[0].stat.sync + ds[1].stat.sync,
+          crc: ds[0].stat.crc + ds[1].stat.crc,
+          pk: ds[0].stat.pk + ds[1].stat.pk - echoN,
+          echo: echoN, maxHits: mh, hits: Math.max(ds[0].lastHits || 0, ds[1].lastHits || 0),
+          band: ackBandSeen
+        };
       };
       ackSrc = ctx.createMediaStreamSource(stream);
       ackSrc.connect(ackProc);
@@ -1603,7 +1628,7 @@ var App = (function () {
         ackListen(waitMs || 6000, function (ack) {
         clearTimeout(call2);
         if (!ack) {
-          rx.pre = '未通過（對方無回執）';
+          if (window.REC) REC.setPre('未通過（對方無回執）');
           log('預檢未通過：對方沒有任何回執 —— 手機沒在監聽、沒開自動回執、音量為 0 或距離太遠。' +
             '這一輪仍會發，但大概率收不到', '#b4791f');
           done(false);
@@ -1611,12 +1636,12 @@ var App = (function () {
         }
         var dg = ack.diag;
         if (dg) {
-          rx.pre = '通過 · 對方 SNR +' + dg.level + ' dB · 同步 ' + dg.hits + '/8';
+          if (window.REC) REC.setPre('通過 · 對方 SNR +' + dg.level + ' dB · 同步 ' + dg.hits + '/8');
           log('預檢通過｜對方在線 · 對方聽到的 18.1k SNR +' + dg.level + ' dB · 對方同步 ' + dg.hits + '/8 · 邊距 ' + dg.margin + ' dB', '#0a5f4f');
           if (dg.level < 6) log('預檢提醒：對方聽到的量只有 +' + dg.level + ' dB，偏弱。兩台靠近些、或把系統音量調大再發', '#b4791f');
           else if (dg.level > 26) log('預檢提醒：對方聽到的量 +' + dg.level + ' dB 很足' + (dg.hits === 0 ? '，但同步沒對上 —— 是頻率/時長問題，不是音量問題' : ''), '#b4791f');
         } else {
-          rx.pre = '通過（對方未帶觀測）';
+          if (window.REC) REC.setPre('通過（對方未帶觀測）');
           log('預檢通過：收到對方回執（對方未帶觀測資料，可能是舊頁面）', '#0a5f4f');
         }
         done(true);
@@ -1712,7 +1737,7 @@ var App = (function () {
             return;
           }
           var miss = ack.missing();
-          log('收到回执 #' + ack.round + '：对方已收 ' + (ack.total - miss.length) + '/' + ack.total +
+          log('收到回执 #' + ack.round + (ackBandUsed ? '（' + ackBandUsed + ' 帶）' : '') + '：对方已收 ' + (ack.total - miss.length) + '/' + ack.total +
             (miss.length ? '，缺 ' + miss.map(function (x) { return x + 1; }).join('、') : '，已齐'), '#0a5f4f');
           if (!miss.length) { finish(true); return; }
           pending = miss;
@@ -1728,7 +1753,12 @@ var App = (function () {
         if (!alive()) return;
         skipRuler = true;                // 標尺剛播過，首輪不用再播
         if (ok) log('預檢完成，開始正式傳輸');
-        loop();
+        else log('預檢未通過，仍開始發（這一輪只能靠收端回執翻盤）', '#b4791f');
+        /* 預檢回呼是整條發送鏈的起點：這裡只要拋一次例外，看起來就是「按下發送後什麼都沒發生」
+         * （v-h 真機日誌就是：預檢②寫完「回执监听结果」之後直接沒了，連 TX 都沒開始）。
+         * 所以整個起跑包一層 try/catch，出事一定落進日誌。 */
+        try { loop(); }
+        catch (e) { log('發送鏈起跑失敗：' + (e && e.message ? e.message : e) + '（請把這行貼回）', '#c0392b'); }
       });
     } else loop();
   }
