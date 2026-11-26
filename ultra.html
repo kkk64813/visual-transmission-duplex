@@ -339,7 +339,7 @@
 /* ================= 版本 / 語系 / 彈窗 / 紀錄 =================
  * 這一層獨立於 App 內核之外：只碰 DOM，不碰音頻。
  * 目的：畫面乾淨、按鈕少、紀錄能一鍵帶走。 */
-var VER = { v: 'v2026-11-26v', t: '2026-11-26 18:20' };
+var VER = { v: 'v2026-11-26w', t: '2026-11-26 18:40' };
 
 /* ---------- 彈窗 ---------- */
 var Dlg = {
@@ -652,7 +652,7 @@ var Lang = (function () {
 })();
 </script>
 
-<script src="ultra-core.js?v=20261126v"></script>
+<script src="ultra-core.js?v=20261126w"></script>
 <script>
 var App = (function () {
   /* ===== 单档单速（2026-11-25 起）=====
@@ -694,6 +694,18 @@ var App = (function () {
   var textState = { total: 0, parts: {} };
   var fileState = null;
   var bufForMeter = new Float32Array(0);
+
+  /* ---------- 自家回声排除 ----------
+   * 手机按「开始监听」会先播一条「就緒握手」回執（18.1k / 1.2 秒），喇叭就在麦克风旁边，
+   * 自己那只麦立刻把它收回来：条子瞬间顶满、还想去校准、甚至当成对端发的包。
+   * 只要本机在播音（以及播完后的一小段余响），麦克风这一段一律不进解码器，
+   * 也不进音量条 —— 播音时条子由 outPeakOnce 按播出电平画，两件事分开。 */
+  var echoUntil = 0, lastEchoLog = 0;
+  function echoNow() {
+    var t = now();
+    if (typeof window.tx === 'object' && window.tx && window.tx.busy) echoUntil = t + 450;  // 450 ms 余响
+    return t < echoUntil;
+  }
 
   function $(id) { return document.getElementById(id); }
 
@@ -1469,7 +1481,7 @@ var App = (function () {
     /* 自动校准：监听中、且已经 0.7 秒没解出过任何包，就自己量一次频率 ——
      * 不用人按按钮。对端每次发送前都会先播标尺音，正好给这一步提供干净的素材。
      * 节流 0.9 秒一次；量不通就保持原值（不用噪声去「校」出个偏移）。 */
-    if (running && !(typeof window.tx === 'object' && window.tx && window.tx.busy) && (window.__snr || 0) > 10 && now() - lastCalAt > 900 && now() - lastPktAt > 700) {
+    if (running && !echoNow() && (window.__snr || 0) > 10 && now() - lastCalAt > 900 && now() - lastPktAt > 700) {
       lastCalAt = now();
       autoCalSilent();
     }
@@ -1738,6 +1750,7 @@ var App = (function () {
       ackProc = ctx.createScriptProcessor(4096, 1, 1);
       ackProc.onaudioprocess = function (ev) {
         var c = new Float32Array(ev.inputBuffer.getChannelData(0));
+        if (echoNow()) return;                 // 自己在播音：这段是回執自己的回声，别当对方回执解
         for (var i = 0; i < ackDec.length; i++) ackDec[i].push(c);
         ackMeter(c);
       };
@@ -2384,6 +2397,12 @@ var App = (function () {
           chunkN++;
           rxTotal += chunk.length;
           if (!rxT0) rxT0 = performance.now();
+          /* 本机正在放自己的声音：这一段是自家回声，不进队列、不画条、不解码。
+           * 采样计数照记，收樣率才不会被这段「静音」算成丢样。 */
+          if (echoNow()) {
+            if (now() - lastEchoLog > 2000) { lastEchoLog = now(); log('本機播音中：自家回聲這段不收音、不解碼', '#888'); }
+            return;
+          }
           try {
             rxQueue.push(chunk);
             qBytes += chunk.length;
