@@ -726,7 +726,17 @@ var GAIN = 0.72;          // 默认标准音量：够响，又不至于让喇叭
       /* 数据还没到齐：先把锁放下、继续扫后面的位置。
        * 回声条件下「先锁上的位置」常常是个差半格的位置，锁住等它反而永远等不到，
        * 放下重扫才能抓住真正对齐的那一份。 */
-      if (needEnd > this.abs0 + this.fill + 2 * symLen) { this.syncAbs = -1; }
+      if (needEnd > this.abs0 + this.fill + 2 * symLen) {
+        /* 数据还差一大截：正常是「原地等下一块」（下面把 syncAbs 放下、scanAbs 留在原位，
+         * 下一次 push 会重新锁在同一处）。但真机上见过 needLen=144（要等 7 秒）这种
+         * 回声里凑巧对齐的假位置，它会把后面的真包全部挡住、日志刷屏 LOCK。
+         * 所以同一位置等超过 1.2 秒就以假锁处理：跳过这个同步头往后重扫。 */
+        var _nowW = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+        if (_nowW - (this._lockPosT || 0) > 1200) {
+          this.scanAbs = Math.max(this.scanAbs, this.syncAbs + symLen);
+        }
+        this.syncAbs = -1;
+      }
       else return;
     }
     var step = Math.max(1, symLen >> 2);
@@ -778,6 +788,8 @@ var GAIN = 0.72;          // 默认标准音量：够响，又不至于让喇叭
 
       this.syncAbs = a2;
       this._lockAt = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+      /* 同一位置反复重锁迟迟解不出 → 用来判定「假锁」，见上面等待分支。 */
+      if (a2 !== this._lockPos) { this._lockPos = a2; this._lockPosT = this._lockAt; }
       this.totalSyms = this.pat.length + (this.dual ? 2 : 3) * (2 + needLen + 2);
       this.scanAbs = a2;
       this.lastHits = ver;
@@ -976,28 +988,56 @@ var GAIN = 0.72;          // 默认标准音量：够响，又不至于让喇叭
     var need = this.totalSyms * symLen;
     if (base < 0 || base + need > this.fill) return;
 
-    // 逐符号跟随时钟：手机的 DAC 和电脑的 ADC 各走各的晶振，几百 ppm 的偏差
-    // 摊到 2 秒的包上就是几毫秒 —— 后半段的窗口会跨到隔壁符号，CRC 必挂。
-    // 所以每个符号都在 ±1/12 符号内重新找一次最佳位置，把偏差带进下一个符号。
-    // 窗口只取符号尾部（跳过回声与滑音），偏差必须钳住，否则会自己越拽越偏。
-    var g = guardOf(symLen, this.sr), wl = symLen - g;
-    var span = Math.max(2, Math.round(symLen / 12));
-    var clamp = Math.max(2, Math.round(symLen / 20));
+    /* 两遍读（v-m）：
+     * ① 粗读：每个符号在 ±1/6 符号内找「边距最大」的位置，得到全体符号的偏移；
+     * ② 把这些偏移拟合出一条直线（起始偏移 + 每符号斜率），按直线重读一遍。
+     * 为什么不再逐符号累加：房间里一次反射就能把单个符号的偏移估计拉歪几毫秒，
+     * 旧代码把这个歪掉的偏移用 EMA 带进下一个符号，越走越偏（真机日志里「漂移
+     * ±58」就是撞上了钳位上限），到包尾整段跨到隔壁符号 —— 平均边距还有 24 dB
+     * 却 CRC 全挂、90 秒只过 8 包，都是这个机制造成的。
+     * 直线拟合把「时钟慢一点点」（每符号固定 +5 个样点）和「某几个符号被反射拉歪」
+     * 区分开了：前者变成斜率，后者被最小二乘当噪声压掉。 */
+    var g0 = guardOf(symLen, this.sr);
+    var g = this.guardMs ? Math.max(g0, Math.min(symLen - 16, Math.round(this.sr * this.guardMs / 1000))) : g0;
+    var wl = symLen - g;
+    var span = Math.max(3, Math.round(symLen / 6));
     var syms = new Uint8Array(this.totalSyms);
-    var cur = base, drift = 0, sumMargin = 0, minMargin = 99;
-    for (var i = 0; i < this.totalSyms; i++) {
-      var r = (this.dual ? classifyDualBest : classifyBest)(this.buf, Math.round(cur) + g, wl, this.sr, this.band, span, this.fScale);
-      syms[i] = r.sym;
-      sumMargin += r.margin;
-      if (r.margin < minMargin) minMargin = r.margin;
-      drift = drift * 0.7 + r.delta * 0.3;
-      if (drift > clamp) drift = clamp;
-      if (drift < -clamp) drift = -clamp;
-      cur += symLen + drift;
+    var offs = new Float64Array(this.totalSyms);
+    var i, r;
+    for (i = 0; i < this.totalSyms; i++) {
+      r = (this.dual ? classifyDualBest : classifyBest)(this.buf, Math.round(base + i * symLen) + g, wl, this.sr, this.band, span, this.fScale);
+      offs[i] = r.delta || 0;
+    }
+    /* 中位数当起始偏移（抗反射），最小二乘当斜率（抓时钟差），斜率钳在 ±1/8 符号 */
+    var sorted = Array.prototype.slice.call(offs).sort(function (a, b) { return a - b; });
+    var a0 = sorted.length ? sorted[Math.floor(sorted.length / 2)] : 0;
+    var mi = (this.totalSyms - 1) / 2, num = 0, den = 0;
+    for (i = 0; i < this.totalSyms; i++) { num += (i - mi) * (offs[i] - a0); den += (i - mi) * (i - mi); }
+    var slope = den ? num / den : 0;
+    var slMax = Math.round(symLen / 8);
+    if (slope > slMax) slope = slMax;
+    if (slope < -slMax) slope = -slMax;
+
+    var sumMargin = 0, minMargin = 99;
+    for (i = 0; i < this.totalSyms; i++) {
+      var off = Math.round(base + i * symLen + a0 + slope * i);
+      if (this.dual) {
+        var dm = dualMargin(this.buf, off + g, wl, this.sr, this.band, this.fScale);
+        if (!dm) { syms[i] = 0; continue; }
+        syms[i] = dm.sym;
+        var mg = Math.min(dm.mr, dm.mc);
+        sumMargin += mg;
+        if (mg < minMargin) minMargin = mg;
+      } else {
+        var rs = classifyBest(this.buf, Math.max(0, off + g), wl, this.sr, this.band, 0, this.fScale);
+        syms[i] = rs.sym;
+        sumMargin += rs.margin;
+        if (rs.margin < minMargin) minMargin = rs.margin;
+      }
     }
     this.lastMargin = this.totalSyms ? sumMargin / this.totalSyms : 0;
     this.lastMinMargin = minMargin;
-    this.lastDrift = drift;
+    this.lastDrift = slope;
 
     var syncOk = true, hits = 0;
     for (var j = 0; j < this.pat.length; j++) if (syms[j] === this.pat[j]) hits++;

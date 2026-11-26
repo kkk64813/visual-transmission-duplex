@@ -339,7 +339,7 @@
 /* ================= 版本 / 語系 / 彈窗 / 紀錄 =================
  * 這一層獨立於 App 內核之外：只碰 DOM，不碰音頻。
  * 目的：畫面乾淨、按鈕少、紀錄能一鍵帶走。 */
-var VER = { v: 'v2026-11-26l', t: '2026-11-26 16:05' };
+var VER = { v: 'v2026-11-26m', t: '2026-11-26 17:10' };
 
 /* ---------- 彈窗 ---------- */
 var Dlg = {
@@ -649,7 +649,7 @@ var Lang = (function () {
 })();
 </script>
 
-<script src="ultra-core.js?v=20261126l"></script>
+<script src="ultra-core.js?v=20261126m"></script>
 <script>
 var App = (function () {
   /* ===== 单档单速（2026-11-25 起）=====
@@ -727,12 +727,12 @@ var App = (function () {
     var m = $('meters');
     if (!m) return;
     m.innerHTML = '';
-    /* 只剩一档，就只画一根条：18.1k 能量。 */
+    /* 三档都画：不管信号落在哪一档，用户都要能看见「有东西进来」。
+     * 主用档排最前，也是唯一会印具体频率的那一档。 */
     Ultra.BANDS.forEach(function (b) {
-      if (b.key !== ONE_BAND) return;
       var d = document.createElement('div');
       d.className = 'meter';
-      d.innerHTML = '<span class="nm">18.1k</span><span class="bar"><i id="bar-' + b.key + '"></i></span><span class="vl" id="val-' + b.key + '">0%</span>';
+      d.innerHTML = '<span class="nm">' + b.name + '</span><span class="bar"><i id="bar-' + b.key + '"></i></span><span class="vl" id="val-' + b.key + '">0%</span>';
       m.appendChild(d);
     });
   }
@@ -824,6 +824,10 @@ var App = (function () {
     /* 只开一个：18.1k + 24ms。原来 3 档 × 3 速度 = 9 个解码器是手机卡死/掉样的总根源。 */
     var b = Ultra.bandByKey(ONE_BAND), sp = ONE_SP;
     var d = new Ultra.StreamDecoder(sr, b, sp, dualOn());
+    /* 本工具的包最长 16B（设定里最大也就几十字节）。把上限压到 64：
+     * 回声里凑巧对齐的假位置常把长度字段解成 130~150 字节，按 200 字节放行会让
+     * 解码器在那里死等 7 秒、把后面的真包全挡住（日志里 needLen=136 刷屏就是这么来的）。 */
+    d.maxPayload = 64;
     d.onPacket = function (payload) { onPacket(payload, b, sp); };
     d.onError = function (kind) {
       if (kind === 'crc') { inc('stCrc'); } else {
@@ -1211,41 +1215,74 @@ var App = (function () {
   var tickN = 0, lastChunk = null, lastSnr = -99;
   var rxTotal = 0, rxT0 = 0, dropWarned = false;
 
+  /* 双音模式下把「收到的两个音」分开显示：行音 0–3、列音 4–7。
+   * 以前只印一个「最强音」，双音发的时候屏幕上永远只有一个数，看不出对面到底在发两条音。 */
+  function tonePairOf(e, b) {
+    var m = e.freqs, bi = 0, bv = -1, ci = 4, cv = -1, t;
+    for (t = 0; t < 4; t++) if (m[t] > bv) { bv = m[t]; bi = t; }
+    for (t = 4; t < 8; t++) if (m[t] > cv) { cv = m[t]; ci = t; }
+    return { row: b.f0 + bi * b.df, col: b.f0 + ci * b.df, rowV: bv, colV: cv, v: Math.min(bv, cv) };
+  }
+
+  /* 音量条（三档都画）：不管频率落在哪一档、不管缩放对不对、不管解码器锁没锁上，
+   * 只要有超声能量进来这根条就要动 —— 用户靠它判断「对面到底有没有在发」。 */
+  var barLv = {}, barDb = {}, bandFloor = {};
+  function paintMeters(slice, sr) {
+    Ultra.BANDS.forEach(function (b) {
+      var e = Ultra.bandEnergy(slice, sr, b);
+      /* 每档自己学一个「安静时的电平」当 0%：噪声电平会随设备/环境变化，
+       * 写死一个常数必然要么永远 0%、要么永远 100%。 */
+      var f0 = bandFloor[b.key];
+      if (!(f0 > 0)) f0 = e.peak;
+      else f0 = e.peak < f0 ? e.peak : f0 * 1.04;      // 跟着最低点往下走，安静久了慢慢回升
+      bandFloor[b.key] = f0;
+      var db = 20 * Math.log10((Math.max(e.peak, 1e-12) + 1e-12) / (Math.max(f0, 1e-12) + 1e-12));
+      var tgt = Math.max(0, Math.min(100, Math.round(db / 24 * 100)));
+      var prev = barLv[b.key] || 0;
+      prev = tgt > prev ? tgt : prev * 0.72 + tgt * 0.28;   // 起得快、落得慢，肉眼才像「在抖」
+      barLv[b.key] = prev; barDb[b.key] = db;
+      var bar = $('bar-' + b.key), val = $('val-' + b.key);
+      if (bar) bar.style.width = Math.round(prev) + '%';
+      if (val) val.textContent = Math.round(prev) + '%';
+    });
+  }
+
   function meterTick(chunk) {
     lastChunk = chunk;
     var sr = ctx ? ctx.sampleRate : 48000;
     var half = Math.min(chunk.length, Math.round(sr * 0.09));
     var slice = chunk.subarray(chunk.length - half);
-    Ultra.BANDS.forEach(function (b) {
-      var e = Ultra.bandEnergy(slice, sr, b);
-      var lvl2 = e.peak > 0 ? Math.min(100, Math.round(20 * Math.log10(e.peak + 1) * 3)) : 0;
-      var bar = $('bar-' + b.key), val = $('val-' + b.key);
-      if (!bar) return;
-      bar.style.width = lvl2 + '%';
-      val.textContent = lvl2 + '%';
-    });
+    paintMeters(slice, sr);
 
     tickN++;
     if (tickN % 2 === 0) {                     // 约每 0.17 秒刷一次，肉眼就是「实时」
-      /* 只在当前音档的范围内找峰点。原来扫 16–23.8k，噪声里最高的点常在 21.5k，
-       * 屏幕上就像「本档一直有 21k 背景音」，其实是扫宽了。 */
-      var pk = Ultra.peakFreq(slice, sr, band.f0 - 120, band.f0 + band.df * 7 + 120, 80);
       var e2 = Ultra.bandEnergy(slice, sr, band);
+      var pair2 = tonePairOf(e2, band);
+      var pk = Ultra.peakFreq(slice, sr, band.f0 - 120, band.f0 + band.df * 7 + 120, 80);
       var fl2 = gateLatestE.floor || 0;
-      var snr2 = fl2 > 0 ? 10 * Math.log10(Math.max(e2.peak, 1e-18) / fl2) : 0;
+      var snr2 = fl2 > 0 ? 10 * Math.log10(Math.max(e2.peak, 1e-18) / fl2) : barDb[band.key] || 0;
       lastSnr = snr2; window.__snr = snr2;
-      var hot2 = gateOn.mid && snr2 > 3 && e2.ratio >= 2 && pk.f > 0;
-      var el = $('dPeak');
-      if (el) {
-        el.textContent = hot2 ? pk.f : '—';
-        el.style.fontSize = hot2 ? '38px' : '22px';
-        el.style.color = hot2 ? 'var(--accent-2)' : 'var(--muted)';
-      }
-      var lv = $('rxNow');
-      if (lv) lv.textContent = hot2 ? (pk.f + ' Hz · +' + snr2.toFixed(0) + ' dB') : (gateOn.mid ? '有能量但沒頻點' : '安靜');
+      var hot2 = snr2 > 3;
+      showFreq(hot2, pk, pair2, snr2);
       updateDbg();
     }
     maybeAck();
+  }
+
+  /* 大字号频率：双音显示「行音 · 列音」，单音显示峰点。 */
+  function showFreq(hot, pk, pair, db) {
+    var el = $('dPeak'), lv = $('rxNow');
+    var dual = dualOn();
+    if (el) {
+      el.textContent = hot ? (dual ? (pair.row + ' · ' + pair.col) : pk.f) : '—';
+      el.style.fontSize = hot ? (dual ? '26px' : '38px') : '22px';
+      el.style.color = hot ? 'var(--accent-2)' : 'var(--muted)';
+    }
+    if (lv) {
+      if (!hot) lv.textContent = '安靜';
+      else if (dual) lv.textContent = '雙音 +' + db.toFixed(0) + ' dB · 行 ' + pair.row + ' / 列 ' + pair.col;
+      else lv.textContent = pk.f + ' Hz · +' + db.toFixed(0) + ' dB';
+    }
   }
 
   /* 轻量界面刷新：只在音频回调里读最后一块、画能量条，不做峰值扫描、不碰解码。 */
@@ -1259,31 +1296,16 @@ var App = (function () {
     var slice = chunk.subarray(chunk.length - half);
     var e = Ultra.bandEnergy(slice, sr, band);
     window.__prof = e.freqs.map(function (m) { return Math.round(10 * Math.log10(Math.max(m, 1e-12))); });
-    var lvl2 = e.peak > 0 ? Math.min(100, Math.round(20 * Math.log10(e.peak + 1) * 3)) : 0;
-    var bar = $('bar-' + band.key), val = $('val-' + band.key);
-    if (bar) {
-      bar.style.width = lvl2 + '%';
-      if (val) val.textContent = lvl2 + '%';
-    }
+    paintMeters(slice, sr);
     tickN++;
     var pk = Ultra.peakFreq(slice, sr, band.f0 - 120, band.f0 + band.df * 7 + 120, 80);
-    /* 只有「确实比底噪高」才算听到，否则一律显示 —— 。
-     * 没有信号时 peakFreq 也会返回一个最大值的频率（噪声里总有个最高的点），
-     * 过去把它原样印出来，看起来就像「18k 一直有背景音」。
-     * 除 dB 之外还要看「峰/均值」比：噪声里 8 个音差不多平，比值接近 1.5~2；
-     * 真收到音时某一个音会明显突出，比值会到 3 以上。 */
+    var pair = tonePairOf(e, band);
     var fl = gateLatestE.floor || 0;
-    var snr = fl > 0 ? 10 * Math.log10(Math.max(e.peak, 1e-18) / fl) : 0;
+    var snr = fl > 0 ? 10 * Math.log10(Math.max(e.peak, 1e-18) / fl) : (barDb[band.key] || 0);
     lastSnr = snr; window.__snr = snr;
-    var hot = gateOn.mid && snr > 3 && e.ratio >= 2 && pk.f > 0;
-    var el = $('dPeak');
-    if (el) {
-      el.textContent = hot ? pk.f : '—';
-      el.style.fontSize = hot ? '38px' : '22px';
-      el.style.color = hot ? 'var(--accent-2)' : 'var(--muted)';
-    }
-    var lv = $('rxNow');
-    if (lv) lv.textContent = hot ? (pk.f + ' Hz · +' + snr.toFixed(0) + ' dB') : (gateOn.mid ? '有能量但沒頻點' : '安靜');
+    /* 门限只用来决定「大字要不要印具体数字」，音量条不受它影响。 */
+    var hot = snr > 3;
+    showFreq(hot, pk, pair, snr);
     /* 手机屏幕上必须能直接看出「同步头到底命中了几个」——这是「听到了却解不出」唯一的判据。
      * 0/8：解码器根本没形成候选（多半是缩放/节奏对不上）；6~7/8：锁门开得太严。 */
     if (decoders.length && decoders[0].scanBest) {
